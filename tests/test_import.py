@@ -58,7 +58,7 @@ def test_task_detect_and_match(tmp_path,monkeypatch):
         assert r.status_code==200
         assert wait(client,p['id'])['status']=='completed'
         p=client.get(path).json();assert p['annotations'][0]['id']=='instance1'
-        async def match(*args):return {'matches':[dict(annotationId='instance1',characterId=p['characters'][0]['id'],reason='候选') ]}
+        async def match(*args,**kwargs):return {'matches':[dict(annotationId='instance1',characterId=p['characters'][0]['id'],reason='候选') ]}
         monkeypatch.setattr(vision,'ask',match)
         assert client.post(path+'/tasks',json={'version':p['version'],'kind':'match'}).status_code==200
         assert wait(client,p['id'])['status']=='completed'

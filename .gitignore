@@ -8,3 +8,11 @@ __pycache__/
 models/
 .DS_Store
 *.log
+
+.env.mysql
+
+.env*.local
+
+# Local temporary and exported files
+tmp/
+output/

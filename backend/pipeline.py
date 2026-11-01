@@ -8,12 +8,12 @@ from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from typing import Literal
 from PIL import Image
-from . import vision
+from . import vision, relations, config
 from .domain import uid, reconcile
 
 class TaskRequest(BaseModel):
     version: int
-    kind: Literal['detect','vision','ocr','match','materials','legacy_materials','vision_match']
+    kind: Literal['detect','vision','ocr','match','materials','legacy_materials','vision_match','people_analysis','relations_analysis']
     documentId: str = ''
     trigger: str = 'user_button'
     pages: list[int] = Field(default_factory=list, max_length=20)
@@ -42,6 +42,24 @@ def install(app,get,save,db,data):
             import pypdfium2 as pdfium
             pdf=pdfium.PdfDocument(path);page_obj=pdf[page-1];bitmap=page_obj.render(scale=1.5);image=bitmap.to_pil().copy();bitmap.close();page_obj.close();pdf.close();return image
         return Image.open(path).convert('RGB')
+    async def analyze_people(p, task, matching=False):
+        previous_observations = {o['annotationId']: o for o in p['observations'] if o.get('confirmed') and not o.get('stale')}
+        previous_matches = {m['annotationId']: m for m in p['matches'] if m.get('confirmed') and not m.get('stale')}
+        result = await vision.analyze(image_path(p), p['annotations'], lambda s: progress(task,s))
+        p['observations'] = [previous_observations.get(o['annotationId'],o) for o in result['observations']]
+        p['visualOverview'] = result['overview']
+        for obs in p['observations']:
+            a = next(a for a in p['annotations'] if a['id']==obs['annotationId'])
+            if not a.get('confirmed'): a['description']=obs['description']
+        task['resultSummary']='视觉分析完成，请确认观察与推测'
+        if matching:
+            progress(task,'匹配人物姓名：根据画面与已有资料建议身份')
+            candidates = await vision.match_people(image_path(p),p)
+            protected = {a['id'] for a in p['annotations'] if a.get('identityConfirmed') and a['id'] in previous_matches}
+            p['matches'] = [m for m in candidates if m['annotationId'] not in protected]
+            p['matches'] += [m for aid,m in previous_matches.items() if aid in protected]
+            task['resultSummary']='外观与身份候选已生成，等待人工确认'
+
     async def work(task,req,snapshot):
         task['status']='running';progress(task,'开始处理')
         try:
@@ -57,22 +75,28 @@ def install(app,get,save,db,data):
                     p['materialSegments']=result['segments'];p['materialAnalysis']=result
                     if not p['characters']:p['characters']=result['characters']
                     task['resultSummary']='资料整理完成，人物与事件框架待确认'
-            elif req.kind=='detect':
-                found=await asyncio.to_thread(vision.detect,image_path(p),lambda s:progress(task,s))
-                retained=[a for a in p['annotations'] if a.get('origin')!='detector' or a.get('confirmed')]
-                p['annotations'] = retained + [a for a in found if not any(vision.iou(a,b)>.45 for b in retained)]
-                task['resultSummary']=f'检测到{len(found)}个人物候选框，请人工校准'
-            elif req.kind in ('vision','vision_match'):
-                result=await vision.analyze(image_path(p),p['annotations'],lambda s:progress(task,s))
-                p['observations']=result['observations'];p['visualOverview']=result['overview']
-                for obs in result['observations']:
-                    a=next(a for a in p['annotations'] if a['id']==obs['annotationId'])
-                    if not a.get('confirmed'):a['description']=obs['description']
-                task['resultSummary']='视觉分析完成，请确认观察与推测'
-                if req.kind=='vision_match':
-                    progress(task,'根据位置、服饰、动作和资料建议身份')
+            elif req.kind in ('detect','people_analysis'):
+                # Compatibility for older pages: reuse saved boxes and make a
+                # single whole-image name match, without per-person analysis.
+                has_people=any(a.get('kind')=='character' for a in p['annotations'])
+                if req.kind=='detect' or not has_people:
+                    found=await asyncio.to_thread(vision.detect,image_path(p),lambda s:progress(task,s))
+                    retained=[a for a in p['annotations'] if a.get('origin')!='detector' or a.get('confirmed') or a.get('identityConfirmed')]
+                    p['annotations']=retained+[a for a in found if not any(vision.iou(a,b)>.45 for b in retained)]
+                    task['resultSummary']=f'检测到{len(found)}个人物候选框，请人工校准'
+                if req.kind=='people_analysis':
+                    if not any(a.get('kind')=='character' for a in p['annotations']):
+                        raise ValueError('未检测到人物，可手动补框后匹配姓名')
+                    progress(task,'根据已有标注匹配姓名')
                     p['matches']=await vision.match_people(image_path(p),p)
-                    task['resultSummary']='外观与身份候选已生成，等待人工确认'
+                    task['resultSummary']='姓名匹配完成，已保留原有人工确认，请核对候选'
+            elif req.kind=='relations_analysis':
+                progress(task,'从史料分析人物关系与原文依据')
+                count=relations.merge(p,await relations.extract(p))
+                task['resultSummary']=f'史料关系分析完成：新增或更新{count}条待核对建议，人工关系已保留'
+            elif req.kind in ('vision','vision_match'):
+
+                await analyze_people(p,task,req.kind=='vision_match')
             elif req.kind=='ocr':
                 doc=next(d for d in p['documents'] if d['id']==req.documentId)
                 pages=req.pages
@@ -97,24 +121,27 @@ def install(app,get,save,db,data):
                 if not p['characters']:raise ValueError('请先从资料提取角色或手动添加角色')
                 p['matches']=await vision.match_people(image_path(p),p)
                 task['resultSummary']='身份候选已生成，请人工确认'
-            if req.kind in ('match','vision_match'):
+            if req.kind in ('match','vision_match','people_analysis'):
                 for a in p['annotations']:
                     m=next((m for m in p['matches'] if m['annotationId']==a['id']),None)
                     if m and not a.get('identityConfirmed'):a['characterId']=m['characterId'];a['identityConfirmed']=False
             current=get(p['id'])
             if current['version']!=req.version:task.update(status='stale',progress='输入已变化，结果未应用；请重试');store(task);return
             p=reconcile(current,p)
-            save(p,req.version,'analysis:'+req.kind,dict(taskId=task['id'],trigger=req.trigger,textModel=os.getenv('AIHUBMIX_MODEL','deepseek-v4.1-flash-1017'),visionModel=os.getenv('AIHUBMIX_VISION_MODEL','gpt-4o'),detector=vision.MODEL_ID))
+            save(p,req.version,'analysis:'+req.kind,dict(taskId=task['id'],trigger=req.trigger,provider=config.model_settings(require_key=False).provider,textModel=config.model_settings(require_key=False).model,visionModel=config.model_settings('vision',require_key=False).model,detector=vision.MODEL_ID))
             task.update(status='failed' if task.get('partialFailure') else 'completed',progress=task['resultSummary'],applied=True)
         except HTTPException as exc:task.update(status='stale' if exc.status_code==409 else 'failed',progress=str(exc.detail))
         except Exception as exc:
-            detail=str(exc) if isinstance(exc,(ValueError,StopIteration)) else f'{type(exc).__name__}：处理失败，请检查模型配置与网络后重试'
+            if isinstance(exc,ModuleNotFoundError):
+                detail=f'运行环境缺少组件：{exc.name or "未知模块"}。请安装项目依赖后重试；这不是 API Key 错误。'
+            else:
+                detail=str(exc) if isinstance(exc,(ValueError,StopIteration)) else f'{type(exc).__name__}：处理失败，请检查模型配置与网络后重试'
             task.update(status='failed',progress=detail)
         finally:active.discard(snapshot['id']);store(task)
 
     @app.get('/api/status')
     def status():
-        return dict(textModel=os.getenv('AIHUBMIX_MODEL','deepseek-v4.1-flash-1017'),visionModel=os.getenv('AIHUBMIX_VISION_MODEL','gpt-4o'),apiConfigured=bool(os.getenv('AIHUBMIX_API_KEY')),detector=vision.MODEL_ID,detectorLoaded=vision._detector is not None,detectorCached=any(vision.CACHE.glob('**/model.safetensors')) if vision.CACHE.exists() else False)
+        return dict(provider=config.model_settings(require_key=False).provider,textModel=config.model_settings(require_key=False).model,visionModel=config.model_settings('vision',require_key=False).model,apiConfigured=bool(config.model_settings(require_key=False).api_key),missingDetectorModules=vision.missing_detector_modules(),detector=vision.MODEL_ID,detectorLoaded=vision._detector is not None,detectorCached=any(vision.CACHE.glob('**/model.safetensors')) if vision.CACHE.exists() else False)
 
     @app.post('/api/models/check')
     async def check_model(payload: dict):
@@ -125,10 +152,10 @@ def install(app,get,save,db,data):
                 return dict(ok=True,kind=kind,result=result)
             if kind=='text':
                 from openai import AsyncOpenAI
-                if not os.getenv('AIHUBMIX_API_KEY'):raise ValueError('未配置API Key')
-                client=AsyncOpenAI(api_key=os.environ['AIHUBMIX_API_KEY'],base_url=os.getenv('AIHUBMIX_BASE_URL','https://aihubmix.com/v1'),timeout=90,max_retries=0)
+                settings=config.model_settings()
+                client=AsyncOpenAI(api_key=settings.api_key,base_url=settings.base_url,timeout=90,max_retries=0)
                 try:
-                    response=await client.chat.completions.create(model=os.getenv('AIHUBMIX_MODEL','deepseek-v4.1-flash-1017'),messages=[{'role':'user','content':'Reply OK.'}],max_tokens=64)
+                    response=await client.chat.completions.create(model=settings.model,messages=[{'role':'user','content':'Reply OK.'}],max_tokens=64)
                     return dict(ok=bool(response.choices),kind=kind)
                 finally:await client.close()
             raise HTTPException(422,'请选择text或vision')
@@ -141,9 +168,11 @@ def install(app,get,save,db,data):
         if p['version']!=req.version:raise HTTPException(409,'版本已变化')
         if pid in active:raise HTTPException(409,'此项目有分析任务正在运行')
         if req.trigger != 'user_button':raise HTTPException(422,'模型任务必须由明确按钮触发')
-        if req.kind=='vision_match' and not p['characters']:raise HTTPException(422,'请先整理资料以获得姓名候选')
+        if req.kind in ('vision_match','people_analysis') and not p['characters']:raise HTTPException(422,'请先整理资料以获得姓名候选')
         if req.kind in ('materials',) and not any(p.get('materialInputs',{}).get(k,'').strip() for k in ('background','relationships','narrative')):raise HTTPException(422,'请先填写资料')
-        if req.kind in ('detect','vision','match','vision_match'):
+        if req.kind=='relations_analysis' and (len(p['characters'])<2 or not relations.eligible_sources(p)):raise HTTPException(422,'请先准备至少两个人物和可用史料原文')
+        if req.kind in ('people_analysis','relations_analysis') and not config.model_settings(require_key=False).api_key:raise HTTPException(422,'请先配置模型 API Key，再运行人物或关系分析')
+        if req.kind in ('detect','vision','match','vision_match','people_analysis'):
             try:image_path(p)
             except ValueError as exc:raise HTTPException(422,str(exc))
         task=dict(id=uid(),projectId=pid,kind=req.kind,request=req.model_dump(),status='queued',progress='等待执行',inputVersion=req.version,time=datetime.now(timezone.utc).isoformat())
@@ -188,7 +217,7 @@ def install(app,get,save,db,data):
         from fastapi.responses import Response
         doc=next((d for d in get(pid)['documents'] if d['id']==did),None)
         if not doc or not 1<=page<=doc['pageCount']:raise HTTPException(404)
-        if doc['format']=='text':return Response((data()/doc['filename']).read_text(),media_type='text/plain')
+        if doc['format']=='text':return Response((data()/doc['filename']).read_text(encoding='utf-8'),media_type='text/plain')
         image=page_image(doc,page);buf=io.BytesIO();image.save(buf,format='PNG');return Response(buf.getvalue(),media_type='image/png')
 
     @app.get('/api/projects/{pid}/portraits/{aid}')

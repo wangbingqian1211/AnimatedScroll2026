@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import Portrait from './Portrait.vue'
+type Row=Record<string,any>
+const props=defineProps<{project:Row;modelValue:string[];single?:boolean}>()
+const emit=defineEmits(['update:modelValue'])
+function box(cid:string){return props.project.annotations.find((a:Row)=>a.kind==='character'&&a.characterId===cid)}
+function toggle(cid:string){emit('update:modelValue',props.single?(props.modelValue.includes(cid)?[]:[cid]):props.modelValue.includes(cid)?props.modelValue.filter(id=>id!==cid):[...props.modelValue,cid])}
+</script>
+<template><div class="cast-picker" aria-label="选择人物"><button type="button" v-for="c in project.characters" :key="c.id" :aria-label="c.name" :aria-pressed="modelValue.includes(c.id)" :class="{picked:modelValue.includes(c.id)}" @click="toggle(c.id)"><span class="picker-check" aria-hidden="true">{{modelValue.includes(c.id)?'✓':'＋'}}</span><Portrait v-if="project.image&&box(c.id)" :url="project.image" :box="box(c.id)"/><span v-else class="picker-fallback">{{c.name.slice(0,1)}}</span><span class="picker-name">{{c.name}}</span></button></div></template>
+<style scoped>.cast-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(65px,1fr));gap:9px}.cast-picker button{position:relative;border:1px solid #e0e5d7;background:#fafbf4;border-radius:6px;padding:9px 5px 7px;min-width:0;max-width:105px}.cast-picker button.picked{background:#e6eedc;border-color:#769267}.cast-picker :deep(canvas){display:block;width:100%;height:62px;object-fit:contain;background:transparent;margin:0 auto 7px}.picker-fallback{display:block;font:26px/62px serif;color:#8b9c7a}.picker-name{display:block;font-size:10px;line-height:1.7;overflow-wrap:anywhere}.picker-check{position:absolute;right:3px;top:3px;width:14px;height:14px;font:10px/12px sans-serif;border:1px solid #ccd6bf;background:#fffef9;border-radius:50%;color:#9aab8c}.picked .picker-check{color:white;background:#55744b;border-color:#55744b}.cast-picker button:focus-visible{outline:2px solid #68875c;outline-offset:3px}</style>

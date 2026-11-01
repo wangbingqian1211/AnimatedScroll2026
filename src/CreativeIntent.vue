@@ -1,0 +1,25 @@
+<script setup lang="ts">
+import {ref,watch} from 'vue'
+type Row=Record<string,any>
+const props=defineProps<{project:Row}>()
+const emit=defineEmits(['generate','save'])
+const mode=ref('manual'),title=ref(props.project.intentTitle||'')
+const titles=['直言与回响','一场廷争中的选择','从画中人的视角重述故事','修补旧栏之后']
+watch(()=>props.project.id,()=>{mode.value='manual';title.value=props.project.intentTitle||''})
+function edited(){props.project.intentOrigin='user_draft'}
+function save(){props.project.intentOrigin='user';emit('save')}
+function skip(){for(const key of Object.keys(props.project.intent))props.project.intent[key]='';props.project.intentTitle='';props.project.intentOrigin='skipped';emit('save')}
+</script>
+<template>
+<section class="intent-studio" aria-labelledby="intent-heading">
+  <div class="intent-heading"><div><small>YOUR STORY, YOUR DIRECTION</small><h2 id="intent-heading">用户创作设想</h2><p>这段故事，你想怎样讲？可以自己写，也可以从一个标题开始。</p></div><span v-if="project.intentOrigin==='llm_draft'" class="intent-draft-tag">AI 草稿 · 尚未保存</span></div>
+  <div class="intent-modes" aria-label="填写创作设想的方式"><button :aria-pressed="mode==='manual'" :class="{active:mode==='manual'}" @click="mode='manual'">自己填写</button><button :aria-pressed="mode==='assisted'" :class="{active:mode==='assisted'}" @click="mode='assisted'">选标题，让 AI 帮我扩写</button></div>
+  <div v-if="mode==='assisted'" class="intent-inspiration"><h3>选择一个创作标题</h3><div class="intent-title-options"><button v-for="item in titles" :key="item" :aria-pressed="title===item" :class="{selected:title===item}" @click="title=item">{{item}}</button></div><label>也可以写自己的标题<input v-model="title" maxlength="120" placeholder="输入你想探索的故事方向"></label><button class="primary" :disabled="!title.trim()" @click="emit('generate',title)">{{project.intentOrigin==='llm_draft'?'重新生成草稿':'按标题生成创作意图草稿'}}</button><p>生成后可在下方审查、修改，满意后再保存。</p></div>
+  <div class="intent-fields"><label>主题<input v-model="project.intent.theme" placeholder="你希望观众思考什么？" @input="edited"></label><label>目标观众<input v-model="project.intent.audience" placeholder="你想把故事讲给谁听？" @input="edited"></label><label class="intent-goal">故事目标<textarea v-model="project.intent.goal" rows="3" placeholder="希望观众经历什么、做出什么选择？" @input="edited"/></label><label class="intent-goal">叙述语气<input v-model="project.intent.tone" placeholder="例如：克制、温暖、悬疑……" @input="edited"></label></div>
+  <details class="intent-boundaries"><summary>补充创作边界 <span>选填</span></summary><div class="intent-fields"><label v-for="(label,key) in {fixed:'不可改动的背景',allowed:'允许虚构的范围',forbidden:'禁止内容'}" :key="key">{{label}}<textarea v-model="project.intent[key]" @input="edited"/></label></div></details>
+  <div class="intent-save"><button class="primary" @click="save">审查并保存创作设想</button><button class="intent-skip" @click="skip">暂不填写并保存</button><small v-if="project.intentOrigin==='skipped'">已选择暂不填写，之后可随时补充。</small></div>
+</section>
+</template>
+<style scoped>
+.intent-studio{margin:28px 0;background:#fffef9;border:1px solid #dce1d3;border-radius:12px;padding:30px}.intent-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.intent-heading small{font-size:10px;letter-spacing:.16em;color:#929b85}.intent-heading h2{font:400 25px serif;margin:10px 0}.intent-heading p{font-size:12px;color:#7e8b75;margin:0}.intent-draft-tag{background:#f2ecd9;color:#927946;font-size:11px;padding:7px 10px;border-radius:5px;white-space:nowrap}.intent-modes{display:flex;gap:6px;border-bottom:1px solid #e0e5d7;margin:24px 0 20px}.intent-modes button{border:0;border-radius:0;background:transparent;padding:11px 15px;border-bottom:2px solid transparent;color:#87937c;font-size:12px}.intent-modes button.active{color:#31594b;border-bottom-color:#31594b}.intent-inspiration{background:#f4f5eb;padding:20px 22px;border-radius:7px;margin-bottom:20px}.intent-inspiration h3{font-size:13px;font-weight:400;margin:0 0 14px}.intent-title-options{display:flex;gap:9px;flex-wrap:wrap}.intent-title-options button{font-size:12px;background:#fffef9}.intent-title-options button.selected{border-color:#65855d;background:#e4ebd9}.intent-inspiration label{max-width:600px;font-size:11px}.intent-inspiration>p{font-size:11px;color:#88917b;margin:10px 0 0}.intent-inspiration>.primary{font-size:12px}.intent-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}.intent-fields label{font-size:12px;margin:10px 0}.intent-fields input,.intent-fields textarea{font-size:12px}.intent-goal{grid-column:1/-1}.intent-boundaries{font-size:12px;color:#718268;border-top:1px solid #e6e9de;padding:17px 0;margin-top:8px}.intent-boundaries summary{cursor:pointer}.intent-boundaries summary span{font-size:10px;color:#99a18e;margin-left:12px}.intent-save{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-top:12px}.intent-save button{font-size:12px}.intent-skip{border:0;background:transparent;color:#89937d}.intent-studio :is(button,input,textarea,summary):focus-visible{outline:2px solid #65855d;outline-offset:3px}@media(max-width:600px){.intent-studio{padding:22px}.intent-heading{flex-direction:column;align-items:flex-start}.intent-fields{grid-template-columns:1fr}.intent-modes button{padding:10px;font-size:11px}}
+</style>

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from typing import Literal
 from . import agent
 from .models import Project
+from . import catalog, storage
 from .domain import blank, reconcile, validate, uid, units, citation_errors
 
 DATA = Path(os.getenv('CREATION_DATA_DIR', str(Path(__file__).parent.parent / 'data')))
@@ -19,10 +20,13 @@ DATA.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title='Creation Agent')
 
 def db():
-    conn = sqlite3.connect(DATA / 'projects.sqlite')
+    conn = storage.connect(DATA)
+    if storage.backend() == 'mysql': return conn
     conn.execute('CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, project TEXT, body TEXT)')
+    conn.execute('CREATE TABLE IF NOT EXISTS video_jobs(id TEXT PRIMARY KEY, project TEXT, body TEXT)')
     conn.execute('CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT)')
     conn.execute('CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, project TEXT, time TEXT, action TEXT, before TEXT, after TEXT, meta TEXT)')
+    catalog.schema(conn)
     return conn
 
 def get(pid):
@@ -35,22 +39,64 @@ def get(pid):
     return project
 
 def save(project, expected, action, meta=None):
+    project = Project.model_validate(project).model_dump()
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         row = conn.execute('SELECT body FROM projects WHERE id=?', (project['id'],)).fetchone()
         old = json.loads(row[0]) if row else None
         if (old and old['version'] != expected) or (not old and expected != 0):
             raise HTTPException(409, '项目已变化，请重新加载；生成结果不会覆盖新版本。')
+        try: catalog.validate(project, old)
+        except ValueError as exc: raise HTTPException(422, str(exc))
         project['version'] = expected + 1
         body = json.dumps(project, ensure_ascii=False)
         conn.execute('INSERT OR REPLACE INTO projects VALUES (?,?)', (project['id'], body))
         conn.execute('INSERT INTO events VALUES (?,?,?,?,?,?,?)', (uid(), project['id'], datetime.now(timezone.utc).isoformat(), action, row[0] if row else '{}', body, json.dumps(meta or {}, ensure_ascii=False)))
+        catalog.synchronize(conn, project)
     return project
 
 @app.get('/api/projects')
 def projects():
     with db() as conn:
-        return [dict(id=p['id'],title=p['title'],version=p['version']) for (body,) in conn.execute('SELECT body FROM projects') for p in [json.loads(body)]]
+        return [dict(id=p['id'],title=p['title'],version=p['version'],libraryKey=p.get('libraryKey',''),annotationCount=len([a for a in p.get('annotations',[]) if a.get('kind')=='character'])) for (body,) in conn.execute('SELECT body FROM projects') for p in [json.loads(body)] if not p.get('archived')]
+
+class ArchiveProject(BaseModel):
+    version:int
+
+@app.post('/api/projects/{pid}/archive')
+def archive_project(pid:str,req:ArchiveProject):
+    p=get(pid)
+    if p['version']!=req.version:raise HTTPException(409,'项目已变化，请重新载入')
+    p['archived']=True
+    return save(p,req.version,'archive_project',dict(recoverable=True))
+
+@app.post('/api/projects/{pid}/restore')
+def restore_project(pid:str,req:ArchiveProject):
+    p=get(pid)
+    if p['version']!=req.version:raise HTTPException(409,'项目已变化，请重新载入')
+    p['archived']=False
+    return save(p,req.version,'restore_project')
+
+@app.post('/api/projects/{pid}/people/{aid}/remove')
+def remove_annotation(pid:str,aid:str,req:ArchiveProject):
+    p=get(pid)
+    if p['version']!=req.version:raise HTTPException(409,'项目已变化，请重新载入')
+    if not any(a['id']==aid for a in p['annotations']):raise HTTPException(404,'标注不存在')
+    return remove_person_and_save(p,req.version,annotation_id=aid)
+
+@app.post('/api/projects/{pid}/characters/{cid}/remove')
+def remove_character(pid:str,cid:str,req:ArchiveProject):
+    p=get(pid)
+    if p['version']!=req.version:raise HTTPException(409,'项目已变化，请重新载入')
+    if not any(c['id']==cid for c in p['characters']):raise HTTPException(404,'人物不存在')
+    return remove_person_and_save(p,req.version,character_id=cid)
+
+def remove_person_and_save(p,version,**selection):
+    from .removal import remove_person
+    try:updated=reconcile(p,remove_person(p,**selection))
+    except ValueError as exc:raise HTTPException(422,str(exc))
+    updated['reviewNotice']='人物已移除。原有正文保留，相关对白需重新指定人物并核对，场景与问答引用已更新。'
+    return save(updated,version,'remove_person',selection)
 
 @app.post('/api/projects')
 def create():
@@ -125,7 +171,7 @@ async def generate(pid: str, req: GenerateRequest):
             conn.execute('BEGIN IMMEDIATE')
             row = conn.execute('SELECT body FROM projects WHERE id=?', (pid,)).fetchone()
             if json.loads(row[0])['version'] != req.version: raise HTTPException(409, '提案生成期间版本已变化')
-            conn.execute('INSERT INTO events VALUES (?,?,?,?,?,?,?)', (uid(), pid, datetime.now(timezone.utc).isoformat(), 'proposal:' + req.task, row[0], row[0], json.dumps(dict(model=agent.MODEL,promptVersion=agent.PROMPT_VERSION,trigger=req.trigger,instruction=req.instruction,proposal=result),ensure_ascii=False)))
+            conn.execute('INSERT INTO events VALUES (?,?,?,?,?,?,?)', (uid(), pid, datetime.now(timezone.utc).isoformat(), 'proposal:' + req.task, row[0], row[0], json.dumps(dict(model=config.model_settings(require_key=False).model,promptVersion=agent.PROMPT_VERSION,trigger=req.trigger,instruction=req.instruction,proposal=result),ensure_ascii=False)))
         return dict(version=req.version, proposal=result, sceneId=req.sceneId, unitId=req.unitId, instruction=req.instruction)
     if req.task == 'extract': p['characters'] = result['characters']; p['outlineConfirmed'] = False
     if req.task == 'outline': p['scenes'] = result['scenes']; p['outlineConfirmed'] = False
@@ -136,7 +182,7 @@ async def generate(pid: str, req: GenerateRequest):
         if scene['units']: raise HTTPException(422, '已有内容请使用局部重写')
         scene['units'] = result['units']
     if req.task != 'check': p['checks'] = []
-    return save(p, req.version, 'generate:' + req.task, dict(model=agent.MODEL,promptVersion=agent.PROMPT_VERSION,trigger=req.trigger,instruction=req.instruction))
+    return save(p, req.version, 'generate:' + req.task, dict(model=config.model_settings(require_key=False).model,promptVersion=agent.PROMPT_VERSION,trigger=req.trigger,instruction=req.instruction))
 
 @app.post('/api/projects/{pid}/apply')
 def apply(pid: str, payload: dict):
@@ -166,7 +212,7 @@ def apply(pid: str, payload: dict):
         scene['units'] = merged + fresh
     p['checks'] = []
     p['reviewNotice'] = '局部修改已应用，请复核相邻场景。'
-    return save(p, payload['version'], 'apply_proposal', dict(model=agent.MODEL,promptVersion=agent.PROMPT_VERSION,instruction=payload.get('instruction','')))
+    return save(p, payload['version'], 'apply_proposal', dict(model=config.model_settings(require_key=False).model,promptVersion=agent.PROMPT_VERSION,instruction=payload.get('instruction','')))
 
 @app.get('/api/projects/{pid}/events')
 def events(pid: str):
@@ -219,8 +265,26 @@ def seed_latest_project():
     snapshot=config.ROOT/'examples/latest-project.json'
     if not snapshot.exists() or projects():return
     import shutil
-    p=Project.model_validate_json(snapshot.read_text()).model_dump()
+    p=Project.model_validate_json(snapshot.read_text(encoding='utf-8')).model_dump()
     shutil.copyfile(config.ROOT/'examples/assets/latest-project.png',DATA/'latest-project.png')
     p['image']='/api/images/latest-project.png'
     save(p,0,'restore_latest_snapshot')
 app.router.add_event_handler('startup',seed_latest_project)
+
+
+catalog.install(app, get, db)
+
+from .workflow import install as install_workflow
+install_workflow(app,get,save)
+from .video import install as install_video
+install_video(app,get,save,db,lambda:DATA)
+
+
+@app.get('/api/database/status')
+def database_status():
+    with db() as conn:
+        conn.execute('SELECT 1').fetchone()
+    return dict(backend=storage.backend(), connected=True)
+
+from . import narrative
+narrative.install(app,get,db,lambda:DATA,save)

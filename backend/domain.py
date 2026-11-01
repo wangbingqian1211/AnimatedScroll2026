@@ -7,7 +7,7 @@ def uid():
 
 
 def blank():
-    return dict(id=uid(), version=1, title='未命名项目', materialInputs=dict(background='',relationships='',narrative='',version=1), materialSegments=[], materialAnalysis={}, sceneCount=3, imageVersion=0, documents=[], observations=[], matches=[], sources=[], characters=[], annotations=[], image='', intent=dict(theme='', audience='博物馆普通观众', tone='克制、生动', goal='', fixed='', allowed='对白、过渡动作', forbidden='无依据的真实人物经历'), scenes=[], outlineConfirmed=False, checks=[])
+    return dict(id=uid(), version=1, title='未命名项目', materialInputs=dict(background='',relationships='',narrative='',version=1), materialSegments=[], materialAnalysis={}, sceneCount=3, imageVersion=0, documents=[], observations=[], matches=[], sources=[], characters=[], annotations=[], image='', intent=dict(theme='', audience='', tone='', goal='', fixed='', allowed='', forbidden=''), scenes=[], outlineConfirmed=False, checks=[])
 
 
 def citation_errors(unit, project):
@@ -71,7 +71,7 @@ def reconcile(old, new):
         raise ValueError('不能删除锁定单元，请先解锁')
     changed = False
     scene_changed = [{k:v for k,v in s.items() if k != 'units'} for s in old['scenes']] != [{k:v for k,v in s.items() if k != 'units'} for s in new['scenes']]
-    context_changed = material_changed or any(old.get(k) != new.get(k) for k in ('intent', 'characters', 'annotations', 'sceneCount', 'observations', 'matches')) or old['sources'] != new['sources'] or scene_changed
+    context_changed = material_changed or any(old.get(k) != new.get(k) for k in ('intent', 'characters', 'annotations', 'sceneCount', 'observations', 'matches', 'paintingInfo', 'personRelations', 'historicalEvents')) or old['sources'] != new['sources'] or scene_changed
     for unit in units(new):
         previous = before.get(unit['id'])
         if previous:
@@ -91,8 +91,11 @@ def reconcile(old, new):
     if changed or context_changed or set(before) != after_ids:
         new['checks'] = []
         new['reviewNotice'] = '内容或上下文已变化，请复核相关单元及跨场景连贯性。'
-    if scene_changed or any(old.get(k) != new.get(k) for k in ('intent', 'characters', 'sources', 'annotations', 'sceneCount', 'observations', 'matches')):
+    if scene_changed or any(old.get(k) != new.get(k) for k in ('intent', 'characters', 'sources', 'annotations', 'sceneCount', 'observations', 'matches', 'paintingInfo', 'personRelations', 'historicalEvents')):
         new['outlineConfirmed'] = False
+    if old.get('interaction',{}) != new.get('interaction',{}):
+        new['checks']=[]
+        new['reviewNotice']='入画对话已调整，请核对问答、线索与解锁顺序。'
     return new
 
 

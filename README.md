@@ -20,7 +20,7 @@ export AIHUBMIX_API_KEY="YOUR_API_KEY_HERE"
 export AIHUBMIX_BASE_URL="https://aihubmix.com/v1"
 export AIHUBMIX_MODEL="deepseek-v4.1-flash-1017"
 export AIHUBMIX_VISION_MODEL="gpt-4o"
-.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8002
 ```
 
 密钥仅由后端读取，前端不接收密钥。也可参考 `.env.example` 在本机创建 `.env`；它已被 `.gitignore` 排除。仓库不包含可用凭据，克隆后须配置自己的 Key。
@@ -29,10 +29,10 @@ export AIHUBMIX_VISION_MODEL="gpt-4o"
 
 ```sh
 cd AnimatedScroll2026
-npm run dev -- --port 5173
+npm run dev
 ```
 
-打开 http://127.0.0.1:5173 。API 文档：http://127.0.0.1:8000/docs 。关闭服务使用对应终端的 Ctrl+C。仅使用本机单用户环境。
+打开 http://127.0.0.1:5173 。API 文档：http://127.0.0.1:8002/docs 。关闭服务使用对应终端的 Ctrl+C。仅使用本机单用户环境。
 
 默认模型 `deepseek-v4.1-flash-1017`，Base URL `https://aihubmix.com/v1`。可用 `.env` 修改。未配置 Key 时可以查看示例、手动创作审核、保存和导出；生成会返回清晰错误，不会伪造生成结果。
 
@@ -125,3 +125,80 @@ npm run build
 ## GitHub 快照
 
 `examples/latest-project.json` 与 `examples/assets/latest-project.png` 保存创作者最新项目的可移植快照。首次启动且本地数据库为空时自动载入，不调用模型。原本地数据库、历史备份、模型权重和 `.env` 不提交；克隆后仍需在本机配置自己的 API Key。
+
+
+## 画作探索页面
+
+首步“画作探索”使用左侧画布、右侧单人物详情布局。画布下方的人物缩略图与原图标注联动，支持姓名搜索、50%–300% 缩放和空白区域拖动平移。未选中人物时显示探索提示；选中后按“人物资料 / 画面观察 / 史料依据”阅读，原文按需展开。
+
+普通探索不修改人物框。点击“修正人物信息”进入修正状态，可调整、补充、删除或撤销删除人物框，修改对应姓名及观察，随后点击“保存修正”或顶部“保存版本”。“退出修正”仅退出编辑界面，未保存修改仍留在当前页面。人物核对确认沿用现有后端接口。
+
+作品背景及人物资料直接读取当前项目已有数据库内容。“资料与工具”收起后不占据主要阅读区域，展开后可维护资料、上传画作、检测人物、运行视觉分析，以及使用文件导入、OCR 与模型设置。浏览、选择和缩放不调用模型。
+
+
+## 结构化画作资料库
+
+“画作资料库”提供作品档案、人物档案、关系图、事件时间线、史料来源及背景原文。独立草稿经“保存到资料库”提交到当前配置的数据库，项目与结构化查询表在同一事务中更新。高级批量资料输入、OCR 及模型工具收在“导入与分析工具”内。数据结构、备份位置及 MySQL 后续路线见 [资料库说明](docs/CATALOG.md)。
+
+
+## Docker + MySQL 资料库
+
+已支持 MySQL 8.4 持久化及现有 SQLite 资料的事务迁移。MySQL 配置放在不提交版本库的 `.env.mysql`；页面会显示真实数据库类型。启动、迁移、备份与真实数据库验证见 [Docker + MySQL](docs/MYSQL.md)。
+
+
+## 人物标注：恢复分步运行
+
+页面直接读取数据库中已保存的人物框、姓名与确认状态，刷新或选择人物不调用模型。选择项目时可看到已有标注数量。
+
+“检测人物框”仅运行本地检测；“匹配姓名”仅对现有框进行一次全图姓名匹配，不逐个人物调用视觉模型，也不自动串联史料关系提取。“导入与分析工具”仍提供显式的外观分析等高级操作。旧页面的 people_analysis 请求也兼容此精简流程：有框时复用已有框，只有无框时才检测。
+
+人物关系仍可在资料库通过“从史料分析关系”单独运行，保留人工确认、编辑和删除保护。原有 MySQL 资料、画作和标注不回退、不覆盖。
+
+## DashScope 模型服务
+
+当进程环境含 `DASHSCOPE_API_KEY` 时，后端优先选择 DashScope；不把密钥写入前端、项目或审计日志。文本和视觉默认均使用 `deepseek-v4.1-flash`，默认兼容地址为 `https://cn-beijing.maas.qianwenaiapi.com/compatible-mode/v1`。所有资料整理、人物视觉分析、姓名匹配、关系提取、创作生成及连通性测试统一读取此配置。
+
+可选变量：`MODEL_PROVIDER=dashscope`、`DASHSCOPE_BASE_URL`、`DASHSCOPE_MODEL`、`DASHSCOPE_VISION_MODEL`。只有显式设置 `MODEL_PROVIDER=aihubmix` 时才强制使用旧服务；若没有 DashScope 密钥，则保留旧配置兼容。显式选择的服务缺少密钥时会报错，不混用另一服务的密钥。
+
+环境变量修改后重启固定 8002 后端。`GET /api/status` 显示实际服务、模型及密钥是否已配置，不返回密钥。可运行 `.venv/Scripts/python.exe -m scripts.check_model_access` 对指定 DashScope 地址做真实小规模文本与空白测试图检查；该检查不发送项目画作或史料。
+
+
+## 人物检测依赖排查
+
+人物检测在本地运行 Grounding DINO，需要项目虚拟环境中的 `torch`、`torchvision` 和 `transformers`。DashScope 连通正常不表示本地检测依赖已安装。Windows CPU 环境可依次运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install 'torch>=2.5,<3' 'torchvision>=0.20,<1' --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+首次检测还需要下载模型权重至 `models/`，之后复用缓存。安装完重启 `npm run dev:backend`；`/api/status` 的 `missingDetectorModules` 应为空。模块缺失会显示具体名称，不应再误报为模型配置或网络问题。
+
+只验证本地检测、且不调用云端模型或写入项目数据库，可运行 `.venv/Scripts/python.exe -m scripts.check_detector`。诊断会下载或复用官方模型，输出检测数量，并将结果保存在 `data/detector-check.json`。
+
+若首次官方整文件下载反复超时，可先运行 `.venv/Scripts/python.exe -m scripts.prepare_detector`。工具从官方地址分段、断点续传权重，核对官方 SHA256 后才启用本地目录 `models/grounding-dino-tiny/`。随后运行本地检测诊断即可。
+
+
+## 可编辑初稿、分镜与古画视频
+
+人物与边界保持原双栏编辑界面。第一次进入会填充空白档案和意图；已有字段保留。故事大纲按 `sceneCount` 生成，场景剧本再转换为独立分镜脚本，包含时长、景别、运镜、出场人物、动作、人物对白、旁白和音效。所有生成内容都是草稿，不自动替创作者确认资料或剧本。无有效逐字引文的模型对白标为创作对白。
+
+`POST /api/projects/{id}/workflow/draft` 接收 `version`、`stage`（prepare / outline / scripts / storyboard）。按当前场数重新生成大纲是显式操作，版本冲突不覆盖用户新稿。`POST /script/confirm` 保存剧本和分镜的内容指纹；修改剧本、人物位置、古画或分镜后，视频提交要求重新确认。
+
+视频使用 `wan3.0-video`，以原画及本镜出场人物裁切的 `reference_image` 输入，加经用户审核的最终提示词；原画不再固定为首尾帧，480P、每段固定5秒、包含音频。使用环境中的 `DASHSCOPE_API_KEY`；可配置 `DASHSCOPE_VIDEO_BASE_URL`。模型约束不能保证每一帧绝对一致，生成后需观看核对。
+
+`POST /videos` 接收 `version`、`sceneId`。正式生成必须确认；本轮开发联调可显式传 `test:true`，会标注为未经用户确认的测试预览。所有提交共用本轮6段硬上限，预占票据持久化于 `data/video-budget/`，即使提交失败也保守计入，服务重启不会重置。相同内容重复请求复用任务；提交响应超时时不自动重提，避免重复计费。远端任务ID持久化到MySQL，服务重启恢复查询原任务。成功视频保存在 `data/videos/`，页面可播放、下载；原始画作快照在 `data/video-inputs/`。本地状态与下载重试不会新建远端视频任务。
+
+
+## 入画对话体验
+
+入口为“入画对话”。新版采用“选引路人 → 宫人提示 → 向被提及人物提问 → 读完回答记录线索 → 解锁对应场景”的顺序。选人页只允许已有画作标注的宫女、宫人、侍女或内侍担任引路人；姓名牌使用图片自身坐标，人物立绘由原图裁切并柔化边缘，不重绘人物。对话为依据现有资料编排的演绎文本，原文依据与创作对白分开显示，不让人物在台词中朗读审核备注。
+
+当前折槛图的五幕有六次关键提问。以后续剧情结局作答的内容仅在相应幕出现；未知人物的背景不用于补造经历。线索手记、已解锁场景和所选引路人保存到本机 localStorage（v2）；剧本问答发生改变时不套用旧进度，不修改创作项目或数据库中的人物标注。
+
+视频只播放 sceneId 精确对应、成功保存且未被标为需重做、没有被标为旧剧本的结果。解锁不会创建视频任务，也不会消耗视频额度；无对应视频时显示已解锁场景与可用分镜，并说明该幕视频尚未制作。支持逐字显示、点击读完、空格继续、线索回看、恢复原进度和减少动态效果设置。逻辑检查：`npm run test:dialogue`。
+
+
+单场动画支持在对应分镜卡片内勾选“我已核对本场剧本与分镜”，点击“确认并生成本场动画”。服务端通过 `/scenes/{sceneId}/confirm-video` 单独记录该场内容指纹，只校验本场；其他场景未完成或修改不会阻止本场生成。本场剧本、分镜或画作变化后需重新确认。同内容重复提交复用任务，仍受本轮视频次数上限约束。
+
+入画对话v3采用“宫人介绍 → 了解了 → 点击画中姓名 → 选择问题”的交互。所有已标注人物显示姓名，只有当前被介绍的角色可交谈；姓名牌按object-fit后的实际画作区域定位，立绘位于对白区左侧。玩家进度与旧版分开保存。
