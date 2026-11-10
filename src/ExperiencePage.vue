@@ -32,9 +32,11 @@ const segmentLabels:Record<string,string>={supported:'资料复述',inference:'�
 const usedHints=new Set<string>(),hintBackups=ref<Record<string,string>>({})
 const hint=computed(()=>view.value?.session.guidance?.hint)
 const person=computed(()=>figures.value.find(v=>v.annotationId===selected.value))
+const showDialogueHistory=ref(false)
+watch(selected,()=>{showDialogueHistory.value=false})
 const turns=computed(()=>view.value?.turns.filter((t:any)=>t.characterId===person.value?.characterId)||[])
 async function run(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=e.message||String(e);if(e.detail?.code==='experience_stale')stale.value=true}finally{busy.value=false}}
-function accept(value:any){view.value=value;if(!figures.value.some(v=>v.annotationId===selected.value))selected.value=value.people[0]?.annotationId||''}
+function accept(value:any){view.value=JSON.parse(JSON.stringify(value).replaceAll('\u8f9b\u5e86\u5fcc','\u8f9b\u5f03\u75be'));if(!figures.value.some(v=>v.annotationId===selected.value))selected.value=value.people[0]?.annotationId||''}
 function uiKey(sid=view.value?.session.id){return storageKey+':ui:'+sid}
 function storedUI(sid:string){try{return JSON.parse(localStorage.getItem(uiKey(sid))||'{}')}catch{return {}}}
 function captureUI(){if(!view.value)return;const videos:Record<string,number>={};shell.value?.querySelectorAll<HTMLVideoElement>('video[data-storyboard-id]').forEach(v=>{videos[v.dataset.storyboardId!]=v.currentTime});const state={selected:selected.value,focused:focused.value,text:text.value,questions:[...questions],scroll:active.value?(transcript.value?.scrollTop||0):(storedUI(view.value.session.id).scroll||0),windowScroll:active.value?window.scrollY:(storedUI(view.value.session.id).windowScroll||0),videos};try{localStorage.setItem(uiKey(),JSON.stringify(state))}catch{}}
@@ -107,8 +109,9 @@ onUnmounted(()=>{pause();clearTimeout(persistTimer);clearInterval(timer);documen
 
   <div class="reader-cast-heading"><span>画中人物</span><small>{{cast.length}} 位角色 · {{figures.length}} 个画中身影</small></div>
   <div class="reader-cast"><button v-for="group in cast" :key="group.person.characterId" :class="{selected:person?.characterId===group.person.characterId}" :aria-pressed="person?.characterId===group.person.characterId" @click="choose(group.instances.find(p=>p.annotationId===selected)||group.person)"><Portrait :url="view.image" :box="avatarBox(group.person)"/><span><b>{{group.person.name}}</b><small>{{group.instances.length>1?group.instances.length+' 个画中身影':group.person.canChat?'点击交谈':'尚未开放对话'}}</small></span><span v-if="person?.characterId===group.person.characterId" class="cast-active-dot"/></button></div>
+  <section v-if="person" class="scene-dialogue" aria-label="当前人物对白"><div class="scene-portrait"><Portrait :url="view.image" :box="person.box"/><span>{{person.name}}</span></div><div class="scene-speech"><header><b>{{person.name}}</b><small>{{person.identity||'画中人物'}}</small></header><template v-if="turns.length && turns[turns.length-1].status==='completed'"><div v-for="(segment,index) in replySegments(turns[turns.length-1]).slice(-1)" :key="index" class="scene-segment" :class="segment.category"><p>{{segment.text}}</p><details v-if="segment.evidence.length"><summary>查看本段依据与来源身份</summary><div v-for="basis in segment.evidence" :key="basis.basisId"><p>{{basis.text}}</p><blockquote v-for="(source,i) in basis.sources" :key="i">{{source.quote}}<small>{{source.title||source.sourceTitle}}</small></blockquote></div></details></div></template><p v-else>{{busy?'正在倾听你的问题…':'与'+person.name+'相遇。可以在右侧输入问题，开始交谈。'}}</p></div></section>
  </section>
- <section class="reader-chat" v-if="person" :aria-label="'与'+person.name+'的对话'"><header class="reader-person"><Portrait :url="view.image" :box="avatarBox(person)"/><div><h2>{{person.name}}</h2><small>{{person.identity||'画中人物'}}</small></div><span class="reader-chat-status">{{person.canChat?'入画对话':'资料待完善'}}</span></header>
+ <section class="reader-chat" v-if="person" :aria-label="'与'+person.name+'的对话'"><header class="reader-person"><Portrait :url="view.image" :box="avatarBox(person)"/><div><h2>{{person.name}}</h2><small>{{person.identity||'画中人物'}}</small></div><span class="dialogue-history-label">历史对话</span><span class="reader-chat-status">{{person.canChat?'入画对话':'资料待完善'}}</span></header>
  <div class="reply-legend" aria-label="发言边框图例"><span class="supported">实线 · 资料复述</span><span class="inference">虚线 · 研究推断</span><span>无框 · 合理演绎</span></div>
  <div ref="transcript" class="reader-turns" role="log" aria-live="polite" aria-relevant="additions text" aria-label="对话记录"><div v-if="!turns.length" class="reader-chat-empty"><span>与 {{person.name}} 相遇</span><p>{{person.canChat?'从一句问候开始，听听画中人的故事。':(person as any).readinessReason||'这位人物还没有可用的已确认角色设定。'}}</p><small>人物身处画中当时，性格与口吻属于演绎，未知之事会坦言不知。</small></div>
   <article v-for="turn in turns" :key="turn.id" class="reader-turn">
@@ -149,3 +152,58 @@ onUnmounted(()=>{pause();clearTimeout(persistTimer);clearInterval(timer);documen
 </style>
 
 <style scoped>.reader-layout{transition:none}.cinematic .reader-layout{grid-template-columns:minmax(0,1fr) 340px}.reader-filmstrip{display:flex;gap:15px;overflow-x:auto;padding:8px 0 16px;scroll-snap-type:x proximity}.reader-filmstrip>button{flex:0 0 208px;padding:0 0 15px;border:1px solid #dbd8c7;background:#fcfaf2;border-radius:12px;overflow:hidden;text-align:left;scroll-snap-align:start;transition:border-color .3s,transform .3s}.reader-filmstrip>button:hover{transform:translateY(-3px);border-color:#a7ae90}.reader-filmstrip>button.active{border-color:#8a9e76;box-shadow:0 0 0 2px #91a97620}.filmstrip-image{height:116px;position:relative;background:#e8e0ca;overflow:hidden}.filmstrip-image :deep(canvas){display:block;width:100%;height:100%;max-height:none;border-radius:0;object-fit:contain}.filmstrip-image>span{position:absolute;inset:0;display:grid;place-items:center;font-size:23px;color:#ffffeb;background:#17291c26}.filmstrip-image>small{position:absolute;top:10px;left:12px;color:#fff8e3;font-size:9px;letter-spacing:.1em}.reader-filmstrip>button>b,.reader-filmstrip>button>small{display:block;margin:11px 14px 0}.reader-filmstrip>button>b{font-size:12px;font-weight:500;color:#60704e}.reader-filmstrip>button>small{font-size:9px;color:#9c9f83;margin-top:6px}.montage-enter-active{transition:opacity .65s ease}.montage-leave-active{transition:opacity .36s ease}.montage-enter-from,.montage-leave-to{opacity:0}@media(prefers-reduced-motion:reduce){.reader-layout,.reader-filmstrip>button,.montage-enter-active,.montage-leave-active{transition:none}}</style>
+
+<style scoped>
+/* Painting exploration above, character-led visual-novel dialogue below. */
+.reader-shell{background:#f5f2e8;max-width:1600px;margin:auto}
+.reader-heading{text-align:center;border-bottom:1px solid #ded7c4;padding-bottom:22px}
+.reader-layout,.cinematic .reader-layout{display:flex;flex-direction:column;gap:24px}
+.reader-painting{position:relative;top:auto;width:100%;min-width:0}
+.reader-cast{display:flex;overflow-x:auto;padding:4px 0 10px}.reader-cast>button{flex:0 0 155px}
+.reader-chat{position:relative;display:grid;grid-template-columns:230px minmax(0,1fr) 300px;grid-template-rows:auto auto minmax(160px,auto);height:auto;min-height:340px;width:100%;overflow:visible;border-radius:16px;background:#fffcf3;box-shadow:0 16px 45px #403b2310;border:1px solid #d8ceb6}
+.novel-portrait{grid-column:1;grid-row:1 / span 5;position:relative;display:flex;align-items:center;justify-content:flex-end;flex-direction:column;min-height:340px;background:linear-gradient(0deg,#e4ddc9,transparent);border-radius:16px 0 0 16px;padding:20px 12px 14px;isolation:isolate}
+.novel-portrait>img{width:100%;height:300px;object-fit:contain;object-position:center bottom;filter:drop-shadow(0 9px 9px #403a2930);margin-top:-65px}
+.novel-portrait :deep(canvas){width:170px;height:280px;object-fit:contain}
+.novel-portrait>div{text-align:center;padding:12px 4px}.novel-portrait small{display:block;letter-spacing:.22em;font-size:10px;color:#9b8864}.novel-portrait b{display:block;font-family:serif;font-size:25px;font-weight:500;color:#3e5849;margin:8px}.novel-portrait span{font-size:11px;color:#877c67}
+.reader-person{grid-column:2;grid-row:1;padding:18px 24px 10px;border:0;background:transparent}.reader-person> :deep(canvas){display:none}.reader-person small{max-width:none}.reader-chat-status{display:none}
+.dialogue-history-toggle{margin-left:auto;font-size:11px;border:1px solid #d7d8c8;border-radius:20px;background:transparent;padding:6px 12px;color:#69735d}
+.reply-legend{grid-column:2;grid-row:2;padding:0 24px 10px;background:transparent;border:0}
+.reader-turns{grid-column:2;grid-row:3;max-height:330px;padding:10px 24px 22px;background:transparent}
+.chat-message-body{max-width:100%;width:100%}.from-character> :deep(canvas){display:none}.from-character .chat-message-meta{display:none}.from-character .chat-bubble{font-size:16px;line-height:2;background:#f5f2e7;border-radius:8px;padding:14px 18px}.reply-segment.fiction .chat-bubble{background:#f1edf5}.from-visitor{margin-bottom:12px}.from-visitor .chat-bubble{font-size:12px;padding:6px 12px}.chat-visitor-avatar{display:none}.reader-chat-empty{min-height:130px}.segment-evidence{font-size:12px}
+.reader-composer{grid-column:3;grid-row:1 / span 3;border-top:0;border-left:1px solid #e5decb;background:transparent;display:flex;flex-direction:column;justify-content:center;padding:24px}.reader-composer textarea{min-height:140px}.reader-composer-footer{align-items:flex-end}.reader-hint{grid-column:2 / span 2}
+@media(max-width:1000px){.reader-chat{grid-template-columns:180px minmax(0,1fr)}.reader-composer{grid-column:2;grid-row:4;border-left:0;border-top:1px solid #e5decb}.novel-portrait>img{height:270px}.reader-hint{grid-column:2}.reader-composer textarea{min-height:80px}}
+@media(max-width:600px){.reader-chat{grid-template-columns:100px minmax(0,1fr)}.novel-portrait{padding:10px 4px;min-height:230px}.novel-portrait>img{height:210px;margin-top:0}.novel-portrait b{font-size:19px}.novel-portrait span{display:none}.reader-person,.reader-turns{padding:12px}.reply-legend{padding:0 12px}.reader-composer{grid-column:1 / -1;grid-row:6;padding:16px}.reader-person{flex-wrap:wrap}.dialogue-history-toggle{margin-left:0}.from-character .chat-bubble{font-size:14px;padding:10px}.reader-hint{grid-column:1 / -1}}
+</style>
+
+<style scoped>
+.reader-shell{max-width:1920px;padding-left:28px;padding-right:28px}
+.reader-layout,.cinematic .reader-layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;align-items:start;gap:24px}
+.reader-painting{grid-column:1;position:static}
+.reader-chat{grid-column:2;position:sticky;top:90px;display:flex;flex-direction:column;height:calc(100vh - 120px);min-height:520px;overflow:hidden;background:#fffdf7}
+.reader-person{padding:18px;border-bottom:1px solid #e5decb;flex-shrink:0}.dialogue-history-label{margin-left:auto;font-size:12px;color:#81775f}
+.reader-turns{padding:16px;flex:1;max-height:none;min-height:0;overflow:auto}.reader-composer{display:block;padding:16px;border-left:0;border-top:1px solid #e5decb}.reader-composer textarea{min-height:95px}
+.from-character .chat-bubble{font-size:13px;line-height:1.8}.reader-hint{flex-shrink:0}
+.scene-dialogue{display:flex;gap:24px;align-items:stretch;background:#fffcf4;border:1px solid #ddd5c3;border-radius:0 0 14px 14px;min-height:190px;padding:20px 24px;margin-top:12px}
+.scene-portrait{position:relative;flex:0 0 92px;align-self:stretch;overflow:hidden}.scene-portrait :deep(canvas){display:block;width:92px;height:200px;object-fit:cover;object-position:top;mask-image:linear-gradient(to bottom,#000 70%,transparent)}
+.scene-portrait>span{position:absolute;bottom:8px;right:0;writing-mode:vertical-rl;padding:8px 5px;background:#f3efdfff;border:1px solid #d8cfb8;font-size:12px;color:#596449;letter-spacing:.15em}
+.scene-speech{flex:1;min-width:0}.scene-speech header{display:flex;gap:14px;align-items:center;margin:8px 0 18px}.scene-speech header b{font-family:serif;font-size:21px;font-weight:500;color:#426051}.scene-speech header small{font-size:11px;color:#938871}.scene-speech p{font-size:16px;line-height:2;color:#4d5547;margin:8px 0}.scene-segment details{font-size:11px;color:#7b7e6d;margin:8px 0}.scene-segment details p,.scene-segment blockquote{font-size:12px}.scene-segment small{display:block}.scene-segment.supported>p{border-left:2px solid #6f9687;padding-left:12px}.scene-segment.inference>p{border-left:2px dashed #b69967;padding-left:12px}
+@media(max-width:1050px){.reader-layout,.cinematic .reader-layout{grid-template-columns:minmax(0,1fr) 310px}.reader-shell{padding-left:16px;padding-right:16px}}
+@media(max-width:760px){.reader-layout,.cinematic .reader-layout{grid-template-columns:1fr}.reader-chat{grid-column:1;position:static;height:580px}.scene-dialogue{padding:14px;gap:14px}.scene-portrait{flex-basis:72px}.scene-portrait :deep(canvas){width:72px;height:180px}.scene-speech p{font-size:14px}}
+</style>
+
+<style scoped>
+.reader-heading{padding-bottom:10px;margin-bottom:12px}.reader-heading h1{margin:5px 0}.reader-shell{padding-top:calc(var(--header-h,64px) + 14px)}
+.reader-painting :deep(.painting-viewer){border-radius:0;border:0}.reader-painting :deep(.painting-caption){padding:6px 12px;font-size:11px}
+.scene-dialogue{margin-top:0;border:0;border-radius:0;min-height:160px;padding:16px 22px 16px 8px;gap:22px;background:#fffdf5}
+.scene-portrait{flex-basis:68px;overflow:visible;align-self:flex-start;margin-top:-32px}.scene-portrait :deep(canvas){width:68px;height:190px;object-fit:cover;border-radius:0;mask-image:linear-gradient(to bottom,transparent,#000 8%,#000 78%,transparent)}
+.scene-portrait>span{bottom:0;right:-5px;font-size:10px;padding:6px 3px}.scene-speech header{margin:12px 0 14px}.scene-speech header b{font-size:18px}.scene-speech p{font-size:15px;line-height:1.9}.scene-segment{background:transparent!important}.scene-segment details{margin-top:8px}
+.reader-cast-heading{margin-top:14px}.reader-cast>button{padding:8px}
+</style>
+
+<style scoped>
+.reader-painting :deep(.painting-stage){height:clamp(280px,46vh,480px)!important;aspect-ratio:auto!important}
+.reader-cast-heading{margin:10px 0 6px}.reader-cast{padding-bottom:8px;margin-bottom:0;gap:8px}.reader-cast>button{padding:7px 9px;flex-basis:145px}
+.scene-dialogue{min-height:230px;padding:24px 24px 24px 12px;margin-top:8px;border-top:1px solid #e3dbc8;gap:26px}
+.scene-portrait{margin-top:0;flex-basis:84px}.scene-portrait :deep(canvas){width:84px;height:220px}.scene-speech header{margin:10px 0 24px}.scene-speech p{font-size:17px;line-height:2}.scene-speech{padding-top:6px}
+@media(max-width:760px){.scene-dialogue{min-height:200px;padding:16px;gap:16px}.scene-speech p{font-size:15px}.reader-painting :deep(.painting-stage){height:320px!important}}
+</style>

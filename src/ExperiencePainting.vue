@@ -8,7 +8,7 @@ const stage=ref<HTMLElement>(),size=ref({w:800,h:480}),natural=ref({w:800,h:480}
 const alpha=computed(()=>new Map(Object.entries(props.assets?.alpha||{})))
 const frame=computed(()=>paintingFrame(size.value.w,size.value.h,props.assets?.width||natural.value.w,props.assets?.height||natural.value.h))
 const focusPerson=computed(()=>props.people.find(p=>p.annotationId===props.focused))
-const transform=computed(()=>props.region?regionTransform(frame.value,size.value.w,size.value.h,props.region):focusTransform(frame.value,size.value.w,size.value.h,focusPerson.value?.box))
+const transform=computed(()=>props.region?regionTransform(frame.value,size.value.w,size.value.h,props.region):focusTransform(frame.value,size.value.w,size.value.h,undefined))
 const planeStyle=computed(()=>({left:frame.value.x+'px',top:frame.value.y+'px',width:frame.value.w+'px',height:frame.value.h+'px','--edge-size':(1.2/transform.value.scale)+'px','--edge-glow':(2/transform.value.scale)+'px',transform:`translate(${transform.value.x}px,${transform.value.y}px) scale(${transform.value.scale})`}))
 const highlighted=computed(()=>focusPerson.value||props.people.find(p=>p.annotationId===hovered.value))
 function boxStyle(p:Figure){const b=p.box;return {left:b.x*100+'%',top:b.y*100+'%',width:b.w*100+'%',height:b.h*100+'%'}}
@@ -43,20 +43,20 @@ onUnmounted(()=>{observer?.disconnect();window.removeEventListener('keydown',esc
 </script>
 <template>
  <div class="painting-viewer" :class="{'is-focused':!!focused,'is-montage':cinematic}">
-  <div ref="stage" class="painting-stage" :class="{'has-hover':!!hovered}" @pointermove="move" @pointerleave="hovered=''" @click="click" @keydown.esc="reset">
+  <div :style="!cinematic?{height:'auto',aspectRatio:(assets?.width||natural.w)+'/'+(assets?.height||natural.h)}:undefined" ref="stage" class="painting-stage" :class="{'has-hover':!!hovered}" @pointermove="move" @pointerleave="hovered=''" @click="click" @keydown.esc="reset">
    <div class="painting-plane" :style="planeStyle">
     <img class="painting-original" :src="image" alt="已确认的原画，可选择画中人物" draggable="false" @load="natural={w:($event.target as HTMLImageElement).naturalWidth,h:($event.target as HTMLImageElement).naturalHeight}">
-    <div class="painting-shade" :class="{visible:!!focused}"/>
+    <div class="painting-shade" :class="{visible:false}"/>
     <div v-for="p in people" :key="p.annotationId" class="painting-figure" :class="{highlighted:highlighted?.annotationId===p.annotationId}" :style="boxStyle(p)">
      <img v-if="cutouts[p.annotationId]?.url" :src="cutouts[p.annotationId].url" alt="" draggable="false" >
     </div>
    </div>
    <button v-for="(p,index) in people" :key="p.annotationId" class="painting-accessible-person" @focus="hovered=p.annotationId" @blur="hovered=''" @click.stop="emit('choose',p)" :aria-label="'聚焦'+p.name+'，画中身影'+(index+1)"/>
    <div v-if="highlighted" class="painting-name" :style="labelStyle"><b>{{highlighted.name}}</b><small>{{highlighted.canChat?'点击与人物交谈':'人物知识尚未开放'}}</small></div>
-   <button v-if="focused||region" class="painting-reset" @click.stop="reset" aria-label="还原画作全景">↙ 返回全景 <kbd>Esc</kbd></button>
+   <button v-if="region" class="painting-reset" @click.stop="reset" aria-label="还原画作全景">↙ 返回全景 <kbd>Esc</kbd></button>
    <div class="painting-media-slot" @click.stop @pointermove.stop><slot/></div>
   </div>
-  <div class="painting-caption"><span>{{focused?'点击背景，返回画作全景':'移动到人物附近，点击进入对话'}}</span><small v-if="loading" role="status">正在本地分离人物轮廓…</small><small v-else-if="Object.values(cutouts).some((v:any)=>v.error)" role="status">部分轮廓未能分离，仍可通过人物卡片交谈</small></div>
+  <div class="painting-caption"><span>{{focused?'已高亮当前对话人物，点击其他人物切换':'移动到人物附近，点击进入对话'}}</span><small v-if="loading" role="status">正在本地分离人物轮廓…</small><small v-else-if="Object.values(cutouts).some((v:any)=>v.error)" role="status">部分轮廓未能分离，仍可通过人物卡片交谈</small></div>
  </div>
 </template>
 <style scoped>
@@ -78,3 +78,5 @@ onUnmounted(()=>{observer?.disconnect();window.removeEventListener('keydown',esc
 @media(max-width:600px){.painting-stage{height:360px}.painting-caption{font-size:11px}.painting-name{padding:7px 11px}}
 @media(prefers-reduced-motion:reduce){.painting-plane,.painting-shade,.painting-figure{transition:none}}
 </style>
+
+<style scoped>.is-focused .painting-stage{background:#eee8da}</style>

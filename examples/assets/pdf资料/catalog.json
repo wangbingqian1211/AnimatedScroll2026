@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "hanshu-zhuyun-pdf",
+      "filename": "汉书-朱云传.pdf",
+      "pageCount": 6,
+      "summary": "收录朱云传记原文及白话翻译，介绍其求学、论经与仕途经历，重点记述他当廷指斥张禹、攀栏折槛，以及辛庆忌进谏使其获免的经过。"
+    },
+    {
+      "id": "hanshu-zhangyu-pdf",
+      "filename": "汉书-张禹传.pdf",
+      "pageCount": 6,
+      "summary": "收录张禹传记原文及白话翻译，讲述他研习经学、教授太子、出任丞相及退居后的生活，呈现汉成帝对他的信任，以及他与王氏家族的往来。"
+    },
+    {
+      "id": "hanshu-xinqingji-pdf",
+      "filename": "汉书-辛弃疾传.pdf",
+      "pageCount": 4,
+      "summary": "收录辛庆忌传记原文及白话翻译，介绍他在西域与边郡的军政经历、入朝任将的过程及恭俭正直的品行，并记述辛氏子孙与家族后来的遭遇。"
+    },
+    {
+      "id": "zhekan-remonstrance-paper-pdf",
+      "filename": "矛盾形象背后的劝谏意图—汉成帝与折槛图_简体版.pdf",
+      "pageCount": 8,
+      "summary": "林宛儒从文献与图像出发，分析《折槛图》中汉成帝的坐姿、神态及人物冲突，探讨看似粗俗、震怒的君主形象如何强化接纳异见与劝谏的教育意图。"
+    },
+    {
+      "id": "hanshu-chengdi-pdf",
+      "filename": "汉书-汉成帝传.pdf",
+      "pageCount": 23,
+      "summary": "记述汉成帝从太子即位到去世的经历，按年梳理朝廷诏令、官员任免、灾异与边疆事务，呈现其统治时期的政治背景。"
+    }
+  ]
+}

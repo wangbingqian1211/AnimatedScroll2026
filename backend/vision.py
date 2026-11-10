@@ -130,7 +130,7 @@ async def analyze(path, annotations, progress=lambda v:None):
         crop=image.crop((max(0,int(a['x']*w)),max(0,int(a['y']*h)),min(w,int((a['x']+a['w'])*w)),min(h,int((a['y']+a['h'])*h))))
         head=crop.crop((0,0,crop.width,max(1,int(crop.height*.25))))
         observation=await ask('第一张是全图，第二张为指定框上缘的头肩参考，第三张为完整人物裁切。框可能包含前景遮挡者或邻人；以第二张靠上、居中的头部对应人物为主体，结合第三张确定衣着姿态，勿将遮挡者当主体。头肩参考只是局部放大，不是额外人物。只描述指定主体，不凭外观认定历史身份。JSON: {"description":"衣着、动作、持物、相对位置、可见互动","inference":"无法确证的活动推测，或空字符串","faceVisible":true,"faceBox":[0.1,0.1,0.5,0.4]}；faceBox必须为第三张完整裁切图中的面部左上、右下归一化坐标，不是第二张坐标；无法区分主体或面部不可见时faceVisible=false且faceBox=null，不强行猜测',[image,head,crop])
-        if not isinstance(observation.get('description'),str):raise ValueError('视觉描述字段无效')
+        if not isinstance(observation.get('description'),str) or not observation['description'].strip():raise ValueError('视觉描述不能为空，请重新分析此人物')
         face=None
         box=observation.get('faceBox')
         if observation.get('faceVisible') and isinstance(box,list) and len(box)==4 and all(isinstance(v,(int,float)) for v in box):
@@ -138,6 +138,39 @@ async def analyze(path, annotations, progress=lambda v:None):
             if 0<=x1<x2<=1 and 0<=y1<y2<=1:face=dict(x=a['x']+x1*a['w'],y=a['y']+y1*a['h'],w=(x2-x1)*a['w'],h=(y2-y1)*a['h'])
         observations.append(dict(id=uid(),annotationId=a['id'],description=observation['description'],inference=str(observation.get('inference','')),faceRegion=face,confirmed=False))
     return dict(overview=overview,observations=observations)
+
+
+def missing_observations(project):
+    observations={o['annotationId']:o for o in project.get('observations',[])}
+    return [a for a in project['annotations'] if a.get('kind')=='character' and (
+        not a.get('description','').strip() or
+        not observations.get(a['id'],{}).get('description','').strip() or
+        observations.get(a['id'],{}).get('stale'))]
+
+
+def apply_observations(project, result):
+    """Visible appearance is independent of identity; keep unrelated observations."""
+    observations={o['annotationId']:o for o in project.get('observations',[])}
+    for observation in result['observations']:
+        aid=observation['annotationId']
+        annotation=next(a for a in project['annotations'] if a['id']==aid)
+        previous=observations.get(aid)
+        if previous and previous.get('confirmed') and previous.get('description','').strip():
+            observation=previous
+        observations[aid]=observation
+        if not annotation.get('confirmed') or not annotation.get('description','').strip():
+            annotation['description']=observation['description']
+        if observation.get('faceRegion') and not annotation.get('faceConfirmed'):
+            annotation['faceRegion']=observation['faceRegion']
+    project['observations']=list(observations.values())
+    if result.get('overview'):project['visualOverview']=result['overview']
+
+
+async def complete_observations(path, project, progress=lambda value:None):
+    missing=missing_observations(project)
+    if missing:
+        apply_observations(project, await analyze(path,missing,progress))
+    return len(missing)
 
 
 def candidate_regions(image,annotations):

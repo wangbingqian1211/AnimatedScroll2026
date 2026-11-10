@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 LIMIT=20
-PROMPT_POLICY_VERSION='painting-director-v5'
+PROMPT_POLICY_VERSION='story-director-v6'
 MEDIA_MODE='reference_images'
 STYLE='画风与人物延续是最高优先级：与所附古画保持完全相同的绘画风格，延续其笔触、线条、设色、材质和人物造型，不真人化、不3D化、不改成现代卡通。优先使用画作中已有的人物，保持每位人物的面貌、发式、衣冠、服饰纹样及身份特征；人物姓名仅用于识别，不能凭姓名重新设计人物或生成替身。'
 # Legacy snapshot defaults only. New submissions require an explicitly
@@ -36,7 +36,7 @@ def shot_inputs(p, sid, data):
     mat=consume.confirmed(p,'material','main')
     path=Path(data)/Path(mat.get('image','')).name
     if not mat.get('image','').startswith('/api/images/') or not path.is_file():raise ValueError('已确认的原画文件不存在')
-    refs=[dict(label='图1',kind='painting',name='原画画风与场景参考')]
+    refs=[dict(label='图1',kind='painting',name='画风、建筑与器物参考（不复制剧情和构图）')]
     people=[]
     for cid in shot.get('characterIds',[]):
         person=consume.confirmed(p,'character',cid)
@@ -54,15 +54,20 @@ def shot_inputs(p, sid, data):
     image_hash=hashlib.sha256(path.read_bytes()).hexdigest()
     # Approval identity includes exactly the provider body, not authoring metadata.
     config=generation.request_config()
+    frames=p['workspace'].get('media',{}).get(sid,{}).get('storyFrames')
+    if frames:config=dict(config,mediaMode='story_frames',frames=frames)
     body=payload(dict(prompt='',referencePlan=refs,requestConfig=config),path)
-    inputs=dict(shot=shot,clue=clue,people=people,references=refs,imageSha256=image_hash)
+    inputs=dict(shot=shot,clue=clue,people=people,references=refs,imageSha256=image_hash,storyFrames=bool(frames))
     inputs['scopeFingerprint']=digest(body)
     inputs['directorFingerprint']=digest(compile_prompt(inputs))
     return inputs,path
 
 
 def compile_prompt(inputs):
-    return video_prompt.compile(inputs,model_info()['duration'],STYLE)
+    text=video_prompt.compile(inputs,model_info()['duration'],STYLE)
+    if inputs.get('storyFrames'):
+        text='所附图片为用户确认的剧情首帧或首尾帧，严格以其人物名单、外貌和构图为准；只有首帧时自然延续动作。\n'+'\n'.join(line for line in text.splitlines() if not any(word in line for word in ('参考用途：','参考索引：','允许出场的人物：')))
+    return text
 
 
 def preview(p,sid,data):
@@ -132,6 +137,8 @@ def payload(job,path):
     url='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode()
     if job.get('requestConfig'):
         config=job['requestConfig']
+        if config.get('mediaMode')=='story_frames':
+            return dict(model=config['model'],input=dict(prompt=job['prompt'],media=config['frames']),parameters=dict(config['parameters']))
         if config.get('mediaMode')=='reference_images':
             media=[]
             for ref in job.get('referencePlan',[dict(kind='painting')]):
@@ -162,6 +169,7 @@ def install(app,get,save,db,data):
         if not row:raise HTTPException(404,'视频任务不存在')
         return json.loads(row[0])
     async def work_adapter(job):
+        generation.active()
         adapter=generation.ADAPTERS.get(job['adapter'])
         if not adapter:
             job.update(status='paused',message='原视频通道暂未接入，任务及预留额度保留');store(job);return
@@ -176,7 +184,9 @@ def install(app,get,save,db,data):
             for _ in range(240):
                 if not result:
                     try:result=await adapter.inspect(job)
-                    except httpx.HTTPError:
+                    except httpx.HTTPError as exc:
+                        from .video_diagnostics import failure, record
+                        record(job, dict(failure(exc), stage='查询'))
                         job.update(status='paused',message='查询暂时失败，可继续查询原任务');store(job);return
                 if result['status']=='succeeded':
                     job.update(status='downloading',providerResult=result,message='正在保存视频');store(job)
@@ -186,11 +196,17 @@ def install(app,get,save,db,data):
                     temporary=folder/(job['id']+'.part');temporary.write_bytes(content);temporary.replace(folder/(job['id']+'.mp4'))
                     job.update(status='succeeded',message='视频已保存',videoUrl=f"/api/projects/{job['projectId']}/videos/{job['id']}/file");store(job);return
                 if result['status']=='failed':
+                    from .video_diagnostics import clean, record
+                    record(job, dict(providerMessage=clean(result.get('message')), providerCode=clean(result.get('providerCode')), remoteId=job.get('remoteId'), traceId=clean(result.get('traceId')), stage='生成'))
                     job.update(status='failed',providerFailed=True,message=result.get('message','视频未生成，额度已释放'));store(job);return
                 job.update(status='running',message=result.get('message','正在生成分镜'));store(job);result=None
                 await asyncio.sleep(15)
             job.update(status='paused',message='等待较久，可继续查询原任务');store(job)
         except Exception as exc:
+            from .video_diagnostics import failure, record
+            record(job, dict(failure(exc), stage='下载' if job.get('providerResult') else '查询' if job.get('remoteId') else '提交'))
+            job['errorType']=type(exc).__name__
+            if isinstance(exc,httpx.HTTPStatusError):job['httpStatus']=exc.response.status_code
             known=not job.get('remoteId') and isinstance(exc,httpx.HTTPStatusError) and 400<=exc.response.status_code<500 and exc.response.status_code!=408
             job.update(status='download_failed' if job.get('providerResult') else 'paused' if job.get('remoteId') else 'failed' if known else 'submission_unknown',
                        submissionKnownRejected=known,message='下载未完成，可继续下载原结果' if job.get('providerResult') else '提交被拒绝，未扣额度' if known else '远端状态待核实；保留额度且不会重复提交')
@@ -285,8 +301,24 @@ def install(app,get,save,db,data):
             job['availableForExperience']=job_usable(p,job,data())
             job['versionNotice']='' if job['matchesCurrentScript'] else '基于旧版本的视频，仍可播放或选择'
             job['selectedForExperience']=p['workspace'].get('media',{}).get(job.get('storyboardId',''),{}).get('selectedJobId')==job['id']
+            if job.get('status') in ('failed','submission_unknown','cost_unknown','cancelled','canceled'):job['message']='本次未计入本地成本，可手动再次提交。服务商实际扣费以账单为准。'
+            if not job.get('diagnostics') and job.get('httpStatus'):job['diagnostics']=dict(httpStatus=job['httpStatus'],errorType=job.get('errorType'),providerMessage='旧记录未保存接口错误正文')
             job.pop('remoteVideoUrl',None)
         return sorted(jobs,key=lambda j:j['time'],reverse=True)
+
+    @app.post('/api/projects/{pid}/storyboards/{sid}/videos/clear-failed')
+    def clear_failed(pid:str,sid:str):
+        get(pid)
+        count=0
+        with db() as c:
+            rows=c.execute('SELECT id,body FROM video_jobs WHERE project=?',(pid,)).fetchall()
+            for jid,body in rows:
+                job=json.loads(body)
+                if job.get('storyboardId')!=sid or job.get('status') not in ('failed','cancelled','canceled') or job.get('archivedAt'):continue
+                job['archivedAt']=datetime.now(timezone.utc).isoformat()
+                c.execute('UPDATE video_jobs SET body=? WHERE id=?',(json.dumps(job,ensure_ascii=False),jid))
+                count+=1
+        return dict(cleared=count)
 
     @app.get('/api/projects/{pid}/storyboards/{sid}/video-prompt')
     def prompt_preview(pid:str,sid:str):
@@ -296,15 +328,15 @@ def install(app,get,save,db,data):
     @app.put('/api/projects/{pid}/storyboards/{sid}/video-prompt')
     def save_prompt(pid:str,sid:str,req:PromptDraft):
         p=versioned(pid,req.version);inputs,_=inputs_for(p,sid)
-        if inputs['scopeFingerprint']!=req.baseFingerprint:raise HTTPException(409,'分镜输入已变化，请重新查看提示词')
         if not req.text.strip():raise HTTPException(422,'提示词不能为空')
-        media(p,sid).update(prompt=req.text,baseFingerprint=req.baseFingerprint,directorFingerprint=inputs['directorFingerprint'],approval=None)
+        media(p,sid).update(prompt=req.text,baseFingerprint=inputs['scopeFingerprint'],directorFingerprint=inputs['directorFingerprint'],approval=None)
         return save(p,req.version,'studio:video:prompt',dict(storyboardId=sid))
 
     @app.post('/api/projects/{pid}/storyboards/{sid}/confirm-video')
     def confirm_video(pid:str,sid:str,req:Version):
         p=versioned(pid,req.version);inputs,_=inputs_for(p,sid);saved=media(p,sid)
-        if not saved.get('prompt') or saved.get('baseFingerprint')!=inputs['scopeFingerprint']:raise HTTPException(422,'请先保存当前最终提示词')
+        if not saved.get('prompt'):raise HTTPException(422,'请先保存当前最终提示词')
+        saved['baseFingerprint']=inputs['scopeFingerprint']
         saved['approval']=approval_hash(inputs,saved['prompt'])
         return save(p,req.version,'studio:video:confirm',dict(storyboardId=sid,trigger='user_button'))
 
@@ -321,21 +353,24 @@ def install(app,get,save,db,data):
             if not text or saved.get('baseFingerprint')!=inputs['scopeFingerprint'] or saved.get('approval')!=request_hash:raise HTTPException(422,'请先保存并审核当前最终提示词')
             if req.retryOf:
                 previous=owned(pid,req.retryOf)
-                if not req.requestId or previous['storyboardId']!=req.storyboardId or not job_current(p,previous,data()) or previous['status']!='failed' or not (previous.get('remoteId') or previous.get('submissionKnownRejected')):raise HTTPException(422,'只可明确重试当前分镜已确定失败的任务；提交状态不明时不能重提')
-            identity=dict(projectId=pid,storyboardId=req.storyboardId,request=request_hash)
+                if not req.requestId or previous['storyboardId']!=req.storyboardId or previous['status'] not in ('failed','cancelled','canceled','submission_unknown','cost_unknown'):raise HTTPException(422,'只可手动重新提交失败、取消或结果未确认的任务')
+            identity=dict(projectId=pid,storyboardId=req.storyboardId,request=request_hash,provider=generation.PROVIDER)
             if req.retryOf:identity.update(retryOf=req.retryOf,requestId=req.requestId)
             jid=digest(identity)[:24]
             with db() as c:row=c.execute('SELECT body FROM video_jobs WHERE id=?',(jid,)).fetchone()
             if row:return json.loads(row[0])
             backend=generation.active();profile=model_info()
             if not backend or not profile['ready']:raise HTTPException(503,'视频模型尚未接入；本次未提交任务，也未扣额度')
-            candidate=dict(prompt=text,referencePlan=inputs['references'],requestConfig=generation.request_config())
+            request_config=generation.request_config()
+            frames=media(p,req.storyboardId).get('storyFrames')
+            if frames:request_config=dict(request_config,mediaMode='story_frames',frames=frames)
+            candidate=dict(prompt=text,referencePlan=inputs['references'],requestConfig=request_config)
             try:provider_hash=digest(backend.build_request(candidate,image))
             except ValueError as exc:raise HTTPException(422,str(exc)) from exc
             if not req.retryOf:
                 with db() as c:previous_jobs=[json.loads(r[0]) for r in c.execute('SELECT body FROM video_jobs WHERE project=?',(pid,))]
                 for previous in previous_jobs:
-                    if previous.get('storyboardId')!=req.storyboardId or previous.get('test'):continue
+                    if previous.get('storyboardId')!=req.storyboardId or previous.get('test') or previous.get('adapter')!=profile['provider']:continue
                     historical_hash=previous.get('providerRequestHash')
                     original=Path(data())/'video-inputs'/(previous['id']+'.png')
                     if not historical_hash and original.is_file():
@@ -352,7 +387,7 @@ def install(app,get,save,db,data):
                      referencePlan=inputs['references'],imageSha256=inputs['imageSha256'],storyboardSnapshot=inputs['shot'],
                      promptPolicyVersion=PROMPT_POLICY_VERSION,model=profile['model'],duration=profile['duration'],resolution=profile['resolution'],
                      adapter=profile['provider'],budgetReservationCny=5,estimatedCny=profile.get('estimatedCny'),
-                     requestConfig=generation.request_config())
+                     requestConfig=request_config)
             if req.retryOf:job['retryOf']=req.retryOf
             try:
                 backend.build_request(job,image)

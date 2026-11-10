@@ -100,6 +100,8 @@ def save(project, expected, action, meta=None, transaction_hook=None):
         if old and 'workspace' in old and not action.startswith('studio:'):
             ingest(old,project)
         ensure(project)
+        from .outline_links import sync as sync_outline_links
+        sync_outline_links(old,project)
         unified=project['workspace']['entities']['material:main']['draft'].get('structured')
         if unified:
             from .structured import validate as validate_structured,finish
@@ -371,6 +373,8 @@ from . import video_budget
 video_budget.install(app,get,db)
 from . import experiments
 experiments.install(app,get,db,lambda:DATA)
+from . import source_library
+source_library.install(app,get,save,lambda:DATA)
 from . import media_previews
 media_previews.install(app,get,db,lambda:DATA)
 experience.install(app,get,db,lambda:DATA)
@@ -418,3 +422,6 @@ def import_artwork_sample(sample_id:str):
     p=blank();p['title']=title;p['artworkName']=title;p['imageVersion']=1
     target=uid()+'.jpg';shutil.copyfile(source,DATA/target);p['image']='/api/images/'+target
     return save(p,0,'import_artwork_sample',dict(sample=sample_id,note='只导入画作，不预设身份或确认资料'))
+
+from . import story_frames
+story_frames.install(app,get,save,lambda:DATA)

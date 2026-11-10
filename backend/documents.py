@@ -527,7 +527,14 @@ def adopt(project,payload):
     for cid in ids:
         candidate=candidates[cid]
         existing=next((c for c in p['characters'] if naming.same_person(c,candidate)),None)
-        if existing and existing['id'] not in updates:continue
+        if existing and existing['id'] not in updates:
+            record=p.get('workspace',{}).get('entities',{}).get('character:'+existing['id'],{})
+            protected=set(record.get('manualFields',[]))
+            for field in ('biography','summary','relationships','identity'):
+                if field not in protected and not existing.get(field) and candidate.get(field):existing[field]=candidate[field]
+            existing['mentions']=list(existing.get('mentions',[]))+[r for r in candidate.get('references',[]) if r not in existing.get('mentions',[])]
+            existing['documentAnalysisId']=analysis['id']
+            continue
         mentions=copy.deepcopy(candidate['references']);hints=[]
         for h in candidate['visualHints']:
             for r in h['references']:hints.append(dict(r,id=uid(),kind='document',text=h['text'],attribute=h['attribute'],value=h['value'],strength=h['strength'],exclusive=h['exclusive']))

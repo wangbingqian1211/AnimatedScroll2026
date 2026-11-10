@@ -263,6 +263,9 @@ def workflow(p):
         if page=='experience':
             complete=bool(people);done=len({person['characterId'] for person in people})
         blocker='' if predicates[page] else {'library':'请上传画作并输入或上传资料','outline':'请先整理资料','clues':'请先整理资料','characters':'请先从资料提取基础人物','storyboards':'请先生成至少一条可用线索','experience':'请先准备至少一位人物的对话设定'}[page]
+        if page=='storyboards' and not predicates[page] and records(p,'clue'):
+            details=ws.validate_entity(p,p['workspace'],records(p,'clue')[0])
+            blocker='已有线索，但尚未就绪，暂不能生成分镜。'+('原因：'+details[0] if details else '请在线索库检查内容及关联资料。')
         pages.append(dict(id=page,name=TITLES[page],complete=complete,done=done,total=len(records(p,'clue')) if page=='clues' else len(rows),unitIds=ids,canGenerate=predicates[page],blocker=blocker,issues=[dict(unitId=u['id'],message=reason) for u in rows for reason in u['issues']],reviewCount=sum(u['status']=='AI' or u['outdated'] for u in rows)))
     for index,page in enumerate(pages):
         following=pages[min(index+1,len(pages)-1)]

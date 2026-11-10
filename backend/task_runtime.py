@@ -148,9 +148,9 @@ def analysis_paths(p,kind,request):
         read+=['/annotations']
         if kind in ('match','vision_match'):read+=['/characters','/sources']
         if kind=='match':read+=['/observations']
-        if kind in ('vision','vision_match'):write+=['/observations','/visualOverview']
+        if kind in ('vision','vision_match','match'):write+=['/observations','/visualOverview']
         if kind in ('match','vision_match'):write+=['/matches']
-        fields=['description','faceRegion'] if kind in ('vision','vision_match') else []
+        fields=['description','faceRegion'] if kind in ('vision','vision_match','match') else []
         if kind in ('match','vision_match'):fields+=['characterId','identityConfirmed','needsReview']
         write += ['/annotations/@'+a['id']+'/'+field for a in p['annotations'] for field in fields]
     if kind in ('materials','document_analysis'):

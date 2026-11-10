@@ -1,5 +1,5 @@
 """SDK client with opt-in, durable live-acceptance accounting. Never log credentials."""
-import fcntl
+from filelock import FileLock
 import inspect
 import json
 import os
@@ -11,8 +11,7 @@ from openai import AsyncOpenAI as OpenAIClient
 
 def update_ledger(fn):
     folder=Path(os.environ['CREATION_LIVE_RUN_DIR']);folder.mkdir(parents=True,exist_ok=True)
-    with (folder/'requests.lock').open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
+    with FileLock(str(folder/'requests.lock')):
         path=folder/'requests.json'
         ledger=json.loads(path.read_text()) if path.exists() else dict(limit=int(os.getenv('CREATION_LIVE_REQUEST_LIMIT','100')),requests=[])
         if os.getenv('CREATION_LIVE_BUDGET_USD'):ledger['limit']=min(ledger['limit'],60)

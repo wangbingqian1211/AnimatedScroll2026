@@ -82,6 +82,52 @@ test('same-field conflicts retain local content until explicit choice',()=>{
  assert.equal(merged.value.name,'本地');assert.equal(merged.conflicts[0].path,'/name')
  setAt(merged.value,'/name',merged.conflicts[0].incoming);assert.equal(merged.value.name,'远端')
 })
+
+// Exercise the actual legacy-action handler used by ImportPanel and document imports.
+const studioScript=readFileSync(new URL('../src/StudioApp.vue',import.meta.url),'utf8').split('<script setup lang="ts">')[1].split('</script>')[0]
+const studioAst=ts.createSourceFile('StudioApp.ts',studioScript,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS)
+const legacyHandler=studioAst.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='legacy')
+const legacyJs=ts.transpileModule(legacyHandler.getText(studioAst),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
+const makeLegacy=new Function('api','accepted','updateChecklist',legacyJs+';return legacy')
+
+function namingFixture(){
+ const base={id:'p',version:1,annotations:[{id:'figure',characterId:'',description:'黄色长袍'}],workspace:{entities:{'material:main':{draft:{notes:'原有资料'}}},jobs:[]}}
+ const incoming=structuredClone(base);incoming.version=2;incoming.annotations[0].characterId='new'
+ incoming.workspace.entities['character:new']={id:'new',kind:'character',draft:{name:'春红',namingOrigin:'creator'},revision:0}
+ incoming.workspace.entities['knowledge:new']={id:'new',kind:'knowledge',draft:{characterId:'new',clueIds:[]},revision:0}
+ const response=structuredClone(incoming)
+ for(const entity of Object.values(response.workspace.entities))entity.history=[]
+ return {base,incoming,response}
+}
+
+test('creating and linking a named person accepts new character and knowledge without false conflicts',async()=>{
+ const {base,incoming,response}=namingFixture();let merged,checked=false
+ const legacy=makeLegacy(async path=>{assert.equal(path,'/projects/p/studio/editor');return incoming},(value,ack)=>{merged=mergeProject(ack||base,base,value)},async()=>{checked=true})
+ await legacy(response)
+ assert.deepEqual(merged.conflicts,[])
+ assert.deepEqual(merged.value,incoming)
+ assert.equal(checked,true)
+})
+
+test('naming result retains edits made while the editor response is loading',async()=>{
+ const {base,incoming,response}=namingFixture(),local=structuredClone(base);let merged
+ const legacy=makeLegacy(async()=>{local.workspace.entities['material:main'].draft.notes='请求期间补充的资料';return incoming},(value,ack)=>{merged=mergeProject(ack||base,local,value)},async()=>{})
+ await legacy(response)
+ assert.deepEqual(merged.conflicts,[])
+ assert.equal(merged.value.workspace.entities['material:main'].draft.notes,'请求期间补充的资料')
+ assert.equal(merged.value.annotations[0].characterId,'new')
+ assert.equal(merged.value.workspace.entities['character:new'].draft.name,'春红')
+})
+
+test('naming still surfaces a genuine concurrent edit to the same field',async()=>{
+ const {base,incoming,response}=namingFixture(),local=structuredClone(base);let merged
+ incoming.annotations[0].description='后台更新的特征';local.annotations[0].description='本地更新的特征'
+ const legacy=makeLegacy(async()=>incoming,(value,ack)=>{merged=mergeProject(ack||base,local,value)},async()=>{})
+ await legacy(response)
+ assert.deepEqual(merged.conflicts.map(c=>c.path),['/annotations/@figure/description'])
+ assert.equal(merged.value.annotations[0].description,'本地更新的特征')
+ assert.equal(merged.value.workspace.entities['character:new'].draft.name,'春红')
+})
 test('ID lists merge independent additions and preserve concurrent row edits',()=>{
  const base={annotations:[{id:'a',x:.1,description:'旧'}]}
  const local={annotations:[{id:'a',x:.2,description:'旧'}]}

@@ -52,7 +52,17 @@ const pageComponents:Record<string,any>={library:LibraryPage,characters:Characte
 const draftSavers=shallowReactive(new Map<string,{save:()=>Promise<void>,dirty:()=>boolean}>())
 function registerDraftSaver(key:string,save:()=>Promise<void>,dirty:()=>boolean){draftSavers.set(key,{save,dirty});return ()=>draftSavers.delete(key)}
 const localChanges=computed(()=>p.value&&(changed().length>0||libraryData(p.value)!==libraryBaseline.value||[...draftSavers.values()].some(v=>v.dirty())))
-function entries(kind:string){return records.value.filter(r=>r.kind===kind)}
+function entries(kind:string):any[]{
+ const rows=records.value.filter(r=>r.kind===kind)
+ if(kind==='plot')return rows.sort((a,b)=>(a.draft.order??9999)-(b.draft.order??9999))
+ if(kind==='clue'){
+  const plots=entries('plot'),rank=new Map(plots.map((r:any,i:number)=>[r.id,i]))
+  const position=(r:any)=>Math.min(...(r.draft.plotIds||[]).map((id:string)=>rank.get(id)??9999),9999)
+  const childPosition=(r:any)=>{const plot=plots.find((p:any)=>p.id===r.draft.plotIds?.[0]);const i=plot?.draft.clueIds?.indexOf(r.id);return i>=0?i:9999}
+  return rows.sort((a,b)=>position(a)-position(b)||childPosition(a)-childPosition(b))
+ }
+ return rows
+}
 function castEntries(){const allowed=p.value?.peoplePolicy?.eligibleCharacterIds;return entries('character').filter(r=>r.draft.inclusionDecision!=='exclude'&&(allowed?allowed.includes(r.id)||r.draft.namingOrigin==='creator':r.draft.depictionScope!=='background'))}
 const smartComposer=ref<InstanceType<typeof FeedbackComposer>>(),smartScopes=ref<Record<string,any>>({})
 const smartScope=computed(()=>smartScopes.value[(p.value?.id||'')+':'+page.value]||null)
@@ -217,7 +227,11 @@ async function retryJob(job:any){
  await run(async()=>{await saveAll();await api(`/projects/${p.value.id}/tasks`,'POST',{version:p.value.version,kind:job.task,documentId:job.request?.documentId||'',pages:job.request?.pages||[],documents:job.request?.documents||[],targetArtwork:job.request?.targetArtwork||'',trigger:'user_button'});await refresh();notice.value='分析任务已提交'})
 }
 function add(kind:string,data:any,rid=id()){const r={id:rid,kind,draft:data,published:null,revision:0,state:'draft',refs:[],history:[]};p.value.workspace.entities[kind+':'+rid]=r;return r}
-async function legacy(value:any){accepted(await api(`/projects/${value.id}/studio/editor`),value);await updateChecklist()}
+async function legacy(value:any){
+ // The response already contains the action's changes. Merge against the last
+ // saved editor baseline so newly created entities are not treated as deletions.
+ accepted(await api(`/projects/${value.id}/studio/editor`));await updateChecklist()
+}
 async function openProject(pid:string){await saveAll();accepted(await api('/projects/'+pid+'/studio/editor'));localStorage.setItem('animatedscroll-project',pid);focus.value='';await restoreEdits();await updateChecklist()}
 async function reloadProjects(){projects.value=await api('/projects');if(!p.value||!projects.value.some(item=>item.id===p.value.id)){if(projects.value.length){accepted(await api('/projects/'+projects.value[0].id+'/studio/editor'));localStorage.setItem('animatedscroll-project',projects.value[0].id);await updateChecklist()}else{p.value=null;baselineProject.value=null;checklist.value={ready:false,items:[]};page.value='overview';writeRoute('overview')}}}
 async function create(projectName='未命名项目'){await run(async()=>{await saveAll();const project=await api('/projects','POST',{title:projectName});accepted(await api(`/projects/${project.id}/studio/editor`));projects.value=await api('/projects');localStorage.setItem('animatedscroll-project',project.id);page.value='library';focus.value='';writeRoute('library');await updateChecklist()})}
@@ -259,14 +273,14 @@ onMounted(async()=>{
  window.addEventListener('hashchange',hashChanged);timer=setInterval(()=>{clock.value=Date.now();poll()},3000)
 })
 onUnmounted(()=>{clearTimeout(saveTimer);clearTimeout(localTimer);clearInterval(timer);window.removeEventListener('hashchange',hashChanged)})
-provide('studio',{experiments,openSmartEdit,runSmartAction,castEntries,unit,reviewing,confirmUnit,generateStep,scheduleAutosave,applyRecord,applyAll,registerDraftSaver,p,page,focus,busy,generating,error,notice,records,entries,rec,title,api,run,saveAll,refresh,navigate,confirm,acknowledge,discard,remove,generate,retryJob,add,legacy,saveFolders,checklist,updateChecklist,openChecks,goToCheck,pending,checkTarget,selectEntity,locked,entityBusy,rootLocked,syncLatest,activeJob,reloadProjects,openProject})
+provide('studio',{projects,beginName,experiments,openSmartEdit,runSmartAction,castEntries,unit,reviewing,confirmUnit,generateStep,scheduleAutosave,applyRecord,applyAll,registerDraftSaver,p,page,focus,busy,generating,error,notice,records,entries,rec,title,api,run,saveAll,refresh,navigate,confirm,acknowledge,discard,remove,generate,retryJob,add,legacy,saveFolders,checklist,updateChecklist,openChecks,goToCheck,pending,checkTarget,selectEntity,locked,entityBusy,rootLocked,syncLatest,activeJob,reloadProjects,openProject})
 </script>
 
 <template>
 <StartupScreen v-if="booting||bootError" :phase="bootPhase" :error="bootError" @retry="initialize"/>
-<div v-else class="app-frame" :class="{'experience-mode':experience}" @input="scheduleAutosave" @change="scheduleAutosave" @compositionstart="compositionStart" @compositionend="compositionEnd" @focusout="blurSave">
+<div v-else class="app-frame" :class="{'experience-mode':experience,'gallery-view':page==='overview'&&!experience}" @input="scheduleAutosave" @change="scheduleAutosave" @compositionstart="compositionStart" @compositionend="compositionEnd" @focusout="blurSave">
  <header class="app-topbar">
-  <div class="brand-group"><button v-if="!experience" class="icon-button mobile-menu" aria-label="打开制作导航" :aria-expanded="mobileNav" @click="mobileNav=!mobileNav"><AppIcon name="menu"/></button><div class="brand"><span class="brand-mark"><AppIcon name="film" :size="19"/></span><span>AnimatedScroll</span></div></div>
+  <div class="brand-group"><button v-if="!experience" class="icon-button mobile-menu" aria-label="打开制作导航" :aria-expanded="mobileNav" @click="mobileNav=!mobileNav"><AppIcon name="menu"/></button><button class="brand" aria-label="返回作品首页" @click="navigate('overview')"><span class="brand-mark"><AppIcon name="film" :size="19"/></span><span>AnimatedScroll</span></button></div><button v-if="page==='overview'&&!experience" class="gallery-create" :disabled="busy" @click="beginName('create')">＋ 新项目</button>
   <button class="experiment-trigger" data-experiment-ignore @click="experiments.state.panel=true">{{experiments.recording()?'实验记录中':'实验面板'}}</button><nav class="mode-switch" aria-label="工作模式"><button :class="{active:!experience}" :aria-current="!experience?'page':undefined" :disabled="busy" @click="experience?returnToCreation():null">创作</button><button :class="{active:experience}" :aria-current="experience?'page':undefined" :disabled="busy" @click="navigate('experience')">欣赏作品</button></nav>
   <div class="topbar-actions" v-if="!experience"><label class="project-select"><span class="sr-only">当前项目</span><select :value="p?.id||''" :disabled="busy" @change="changeProject"><option v-if="!p" value="">选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{item.title}}</option></select></label><button class="icon-button" :disabled="busy||!p" @click="beginName('rename')" aria-label="修改画作名称" title="修改画作名称"><AppIcon name="edit" :size="16"/></button><button class="icon-button" :disabled="busy" @click="beginName('create')" aria-label="新建项目" title="新建项目"><AppIcon name="plus"/></button><span class="topbar-divider"/><CreationCopy/><button class="checks-trigger" aria-label="制作检查" :disabled="!p" :aria-expanded="checksOpen" @click="openChecks()"><AppIcon name="check" :size="17"/><span>制作检查</span><b class="count-badge" v-if="pending.length">{{pending.length}}</b></button></div>
   <button v-else class="return-creation" :disabled="busy" @click="returnToCreation"><AppIcon name="back" :size="17"/>返回创作</button>
@@ -280,7 +294,7 @@ provide('studio',{experiments,openSmartEdit,runSmartAction,castEntries,unit,revi
    <div v-if="error" class="app-message error" role="alert"><AppIcon name="alert" :size="17"/><span>{{error}}</span><button :disabled="busy||!p" @click="run(refresh)">重新加载</button><button class="icon-button" aria-label="关闭错误提示" @click="error=''"><AppIcon name="close" :size="16"/></button></div>
    <div v-if="conflicts.length" class="app-message error"><span>{{conflicts.length}} 个字段存在并行编辑冲突，当前编辑已保留。</span><button @click="showConflicts=true">查看差异</button></div><div v-if="notice" class="app-message" role="status"><span>{{notice}}</span><button class="icon-button" aria-label="关闭提示" @click="notice=''"><AppIcon name="close" :size="16"/></button></div>
    <main class="studio-shell">
-    <div class="page-heading"><div><span class="eyebrow">{{page==='overview'?'系统概览':'当前步骤 · '+currentPage.number}}</span><h1>{{currentPage.name}}</h1></div><div class="project-meta" v-if="p"><GenerationButton v-if="page!=='overview'&&page!=='storyboards'" :page="page"/><small role="status">{{autoStatus}}</small></div></div>
+    <div class="page-heading"><div><span class="eyebrow">{{page==='overview'?'系统概览':'当前步骤 · '+currentPage.number}}</span><h1>{{currentPage.name}}</h1></div><div class="project-meta" v-if="p"><GenerationButton v-if="!['overview','library','storyboards'].includes(page)" :page="page"/><small role="status">{{autoStatus}}</small></div></div>
     <section v-if="p&&page!=='overview'" class="page-guide"><template v-for="step in checklist.pages?.filter((v:any)=>v.id===page)"><span>{{step.done}}/{{step.total}} 项可用</span><span v-if="step.blocker">{{step.blocker}}</span><span v-else-if="step.complete">本步内容已可用，可继续下一步；人工核对为可选</span><span v-else>未完成项见下方卡片，其他可用内容不受影响</span><button v-if="step.nextAction&&step.nextAction.page!==page" @click="navigate(step.nextAction.page)">下一步：{{step.nextAction.label}}</button></template></section>
     <p v-if="p&&!['overview','library','experience'].includes(page)&&rec('material','main')?.draft.structured?.conflicts?.some((c:any)=>c.kind==='contradiction'&&c.status!=='retired'&&!['current','candidate'].includes(c.resolution))" class="material-dispute-note">资料中保留着不同说法，建议先处理相关分歧。继续创作时将保留不确定性。<button @click="navigate('library')">查看资料争议</button></p>
     <OverviewPage v-if="page==='overview'"/>

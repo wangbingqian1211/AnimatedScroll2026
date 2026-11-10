@@ -57,6 +57,8 @@ def context(p,task='check',target=''):
         ctx['targetPlot']=dict(ws.find(w,'plot',target)['draft'],id=target)
         ctx['existingChildren']=[r['draft'] for r in rows('clue') if r['draft'].get('plotIds')==[target]]
     if task=='clue':ctx['targetClue']=ws.find(w,'clue',target)['draft']
+    if task in ('culture','relationship','clue'):
+        ctx['storyOutline']=[dict(r['draft'],id=r['id']) for r in sorted(rows('plot'),key=lambda r:r['draft'].get('order',9999))]
     if task=='relationship':ctx['targetCharacter']=chosen(ws.find(w,'character',target))
     if task=='storyboard':
         from .consumption import character_id
@@ -190,8 +192,9 @@ def apply_output(p,task,target,output,ctx,analysis=None):
                 if old and not shared:
                     old['state']='deleted'
                     if 'storyboard:'+cid in cw['entities']:cw['entities']['storyboard:'+cid]['state']='deleted'
-        for plot in output['plots']:
+        for plot_index,plot in enumerate(output['plots']):
             pid=target if task=='plot' else uid();body={k:v for k,v in plot.items() if k!='clues'};body.update(region=None,clueIds=[])
+            body['order']=plot_index if task=='plots' else previous['draft'].get('order',0)
             if 'plot:'+pid not in cw['entities']:cw['entities']['plot:'+pid]=ws.record('plot',pid,body)
             cw['entities']['plot:'+pid]['draft']=body
             for clue in plot['clues']:body['clueIds'].append(add_clue(cw,clue,'narrative',[pid],source='plot:'+pid))

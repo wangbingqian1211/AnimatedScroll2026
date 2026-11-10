@@ -107,7 +107,9 @@ def input_value(p,stage,target=''):
 def write_paths(p,stage,target=''):
     if stage=='children':return ['/workspace/entities/'+k+'/draft' for k,r in ws.ensure(p)['entities'].items() if r['kind'] in ('plot','clue') and r['state']!='deleted']
     if stage=='rewrite':
-        kind,rid=target.split(':',1);return ['/workspace/entities/'+kind+':'+rid+'/draft']
+        kind,rid=target.split(':',1)
+        if kind=='plot':return studio.task_paths(p,'plot',rid)[1]
+        return ['/workspace/entities/'+kind+':'+rid+'/draft']
     kinds={'documents':{'material'},'materials':{'material','character'},'characters':{'character'},'painting':{'material'},'intent':{'intent','experience_config'},'culture':{'clue'},'relations':{'clue'},'plots':{'plot','clue'},'clues':{'clue'},'knowledge':{'knowledge'},'personas':{'persona','experience_config'},'storyboards':{'storyboard'}}[stage]
     return ['/workspace/entities/'+k+'/draft' for k,r in ws.ensure(p)['entities'].items() if r['kind'] in kinds and r['state']!='deleted']
 
@@ -501,7 +503,10 @@ def install(app,get,save,db,data):
             if req.targets and not set(req.targets)<=set(allowed):raise HTTPException(422,'所选分镜不属于当前生成范围')
             requested=req.targets or allowed
             if not requested:raise HTTPException(422,'当前范围内没有可制作的线索')
+        from .revisions import refresh_current_dependencies
+        refresh_current_dependencies(p)
         make_available(p)
+        refresh_current_dependencies(p)
         page=next(v for v in workflow(p)['pages'] if v['id']==req.page)
         if not page['canGenerate']:raise HTTPException(422,dict(message=page['blocker'],page=workflow(p)['nextAction']['page']))
         plans=dict(library=['documents','materials','characters','painting'],outline=['intent','plots'],clues=['culture','relations','clues'],characters=['characters','knowledge','personas'],storyboards=['storyboards'])

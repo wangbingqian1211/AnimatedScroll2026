@@ -1,5 +1,9 @@
 > 新资料整理交互：[多来源资料整理与统一反馈](30-material-pipeline.md)。Overview 含主流程图及独立资料整理子流程图。
 
+已有资料选择与来源说明：[从旧数据库选择已有资料](34-existing-source-library.md)。
+
+当前系统的使用顺序与模块关系：[工作逻辑与使用顺序](33-system-workflow-guide.md)。
+
 > 当前操作规则： [简化审核与工作流](22-review-workflow.md) · [验证与恢复记录](23-review-verification.md) · [首次加载与群体叠卡](24-loading-and-visual-groups.md) · [人物框与可视化线索树](25-visual-clue-tree.md) · [体验保留与手动刷新](26-persistent-experience.md)。旧分部文档保留数据和接口沿革，交互规则以这些文档为准。
 
 # AnimatedScroll 创作工作台

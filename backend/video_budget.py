@@ -37,6 +37,7 @@ def lock_project(c,pid):
 def charge(job,legacy=False):
     if job.get('test') or legacy and job.get('kind')!='video':return 0,0,'free'
     status=job.get('status','')
+    if status in ('failed','cancelled','canceled','submission_unknown','cost_unknown'):return 0,0,'released'
     rejected=job.get('submissionKnownRejected') or any(code in job.get('message','') for code in ('async_not_enabled','permission_denied','no_available_channel','insufficient_quota'))
     if status=='skipped' or status in ('failed','cancelled') and (rejected or job.get('providerFailed')):return 0,0,'released'
     amount=job.get('budgetReservationCny',job.get('reservedCny') if legacy else SLOT_CNY)

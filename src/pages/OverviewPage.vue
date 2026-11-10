@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed,ref} from 'vue'
+import ProjectGallery from '../ProjectGallery.vue'
 import ProjectArchive from '../ProjectArchive.vue'
 import WorkflowDiagram from '../WorkflowDiagram.vue'
 import {useStudio} from '../studioContext'
@@ -26,9 +27,9 @@ const subedges=[{from:'sources',to:'parse'},{from:'parse',to:'extract'},{from:'e
 function reveal(){subflow.value?.scrollIntoView({behavior:'smooth',block:'start'});subflow.value?.focus({preventScroll:true})}
 </script>
 <template><section class="overview-page">
- <div class="overview-intro"><span class="eyebrow">制作流程</span><h2>从资料到入画对话</h2><p>先整理依据，再逐步创作。修改自动保存，每一步都可以回看和调整。</p><button v-if="s.p.value&&s.checklist.value.nextAction" class="primary" @click="s.navigate(s.checklist.value.nextAction.page)">继续：{{s.checklist.value.nextAction.label}}<AppIcon name="arrow" :size="15"/></button></div>
+ <ProjectGallery/><details class="overview-details"><summary>了解创作流程 <span>从资料整理到入画对话</span></summary><div class="overview-intro"><span class="eyebrow">制作流程</span><h2>从资料到入画对话</h2><p>先整理依据，再逐步创作。修改自动保存，每一步都可以回看和调整。</p><button v-if="s.p.value&&s.checklist.value.nextAction" class="primary" @click="s.navigate(s.checklist.value.nextAction.page)">继续：{{s.checklist.value.nextAction.label}}<AppIcon name="arrow" :size="15"/></button></div>
  <section class="overview-flow"><div class="workflow-heading"><h3>完整制作流程</h3><span>点击步骤进入工作区</span></div><WorkflowDiagram label="完整制作流程" :nodes="steps" :edges="edges" interactive @navigate="s.navigate($event)" @action="reveal"/><p class="flow-caption">基础人物来自资料整理，完整知识与对话设定在线索之后准备。分镜视频仍单独审核和提交。</p></section>
  <section ref="subflow" tabindex="-1" class="overview-subflow" aria-label="画作资料整理子流程"><div class="workflow-heading"><div><span class="subflow-tag">SUB-WORKFLOW · 资料与基础人物</span><h3>画作资料整理</h3></div><button @click="s.navigate('library')">进入资料库 →</button></div><p class="flow-caption">多个来源归为一份资料。先读摘要，只处理真正的矛盾；选中任意结果，用智能修改继续改进。</p><WorkflowDiagram label="画作资料整理子流程" :nodes="subnodes" :edges="subedges"/></section>
- <ProjectArchive/>
+ </details><details class="overview-details project-management"><summary>项目与示例管理 <span>导入示例、归档与恢复</span></summary><ProjectArchive/></details>
 </section></template>
 <style scoped>.overview-flow{margin-bottom:28px}.overview-subflow{border:1px solid #dce6de;background:#f7faf5;border-radius:14px;padding:24px;margin:28px 0 36px;scroll-margin-top:110px}.overview-subflow:focus{outline:2px solid #7ba48c;outline-offset:4px}.overview-subflow .workflow-heading h3{margin-top:9px;font-size:16px}.subflow-tag{font-size:9px;color:#7d9684;letter-spacing:.08em}.flow-caption{font-size:12px;color:#809087;line-height:1.9}.workflow-heading button{font-size:11px;white-space:nowrap}</style>

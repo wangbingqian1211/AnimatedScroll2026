@@ -123,6 +123,9 @@ def generation_context(p,target=''):
     for cid in candidates(p,target):
         context=dialogue_context(p,cid)
         for clue in context['clues']:clue['phases']=sorted(phases(p,dict(knowledge(p,cid))[clue['id']]))
+        name=p['workspace']['entities']['character:'+cid]['draft'].get('name','')
+        context['documentEvidence']=[dict(documentId=d['id'],page=page.get('page'),text=page.get('text','')) for d in p.get('documents',[]) for page in d.get('pages',[]) if name and name in page.get('text','')]
+        context['storyOutline']=[r['draft'] for r in p['workspace']['entities'].values() if r['kind']=='plot' and r['state']!='deleted' and cid in r['draft'].get('characterIds',[])]
         roles.append(dict(characterId=cid,**context))
     return dict(roles=roles,presets=PRESETS,boundary=BOUNDARY)
 
@@ -160,6 +163,10 @@ def context(p,cid,collected):
     frozen=pinned(p,cid)
     result=dialogue_context(frozen,cid)
     known={v['clueId'] for v in role['knowledgeTiming'] if accessible(v,role)}
+    plots=sorted([r.get('published') or r['draft'] for r in p['workspace']['entities'].values() if r['kind']=='plot' and r['state']!='deleted'],key=lambda row:row.get('order',0))
+    current_plot=next((plot for plot in plots if set(plot.get('clueIds',[]))-set(collected)),plots[-1] if plots else {})
+    stage_ids=set(current_plot.get('clueIds',[]))
+    if plots:known &= stage_ids
     result['clues']=[c for c in result['clues'] if c['id'] in known]
     basis=[]
     def add(text,category,evidence,clue_id='',origin='confirmed_profile'):
@@ -180,7 +187,27 @@ def context(p,cid,collected):
         for unit in clue['units']:
             add(unit['text'],unit.get('category','fiction'),clue['evidence'],clue['id'],'clue_unit')
         for ref in clue['evidence']:add(ref['quote'],ref.get('category','fiction'),[ref],clue['id'],'clue_source')
+    if plots:
+        # Broad biographies and source quotations can contain the whole ending.
+        basis=[b for b in basis if b['origin']=='clue_unit' or b['origin'] in ('profile:name','profile:identity')]
+        result['character']={k:v for k,v in result['character'].items() if k in ('name','identity')}
+    # Current public scene is visible to characters even when an older persona
+    # revision has no links to the newly split outline clues.
+    if plots:
+        existing={c['id'] for c in result['clues']}
+        for clue_id in stage_ids:
+            record=p['workspace']['entities'].get('clue:'+clue_id)
+            if not record or record['state']=='deleted':continue
+            clue=record.get('published')
+            if not clue:continue
+            units=clue.get('units') or []
+            if units:
+                for unit in units:add(unit.get('text',''),unit.get('category','fiction'),[],clue_id,'current_scene')
+            else:add(clue.get('summary',''),'fiction',[],clue_id,'current_scene')
+            if clue_id not in existing:result['clues'].append(dict(id=clue_id,name=clue.get('name','')))
+            known.add(clue_id)
     safe_role=copy.deepcopy(role);safe_role['knowledgeTiming']=[v for v in safe_role['knowledgeTiming'] if accessible(v,role)]
+    if plots:safe_role={k:v for k,v in safe_role.items() if k in ('selfReference','tone','personality')}
     viewpoint=config(p).get('viewpoint','depicted')
     boundary=BOUNDARY if viewpoint=='depicted' else '以本人一生的回忆视角交谈，不知身后之事；不新增生平、关系或历史事件。性格与即时反应为演绎。'
     return dict(character=result['character'],persona=safe_role,basis=basis,clues=[{k:c[k] for k in ('id','name')} for c in result['clues']],
@@ -200,6 +227,8 @@ def verify_reply(result,ctx):
     for row in value['segments']:
         if not row['text'].strip():raise ValueError('回答段落不能为空')
         if not set(row['basisIds'])<=basis.keys() or not set(row['clueIds'])<=allowed:raise ValueError('回答引用了角色范围外的依据或线索')
+        if any(phrase in row['text'] for phrase in ('气氛一下子紧了','气氛骤然紧张','众人的目光都转向','众人的目光转向')):
+            raise ValueError('请删除全知旁白，只保留当前人物亲口说出的自然台词；可以表达自己的立场，不描述全场气氛')
         refs=[basis[k] for k in dict.fromkeys(row['basisIds'])]
         if not set(row['clueIds'])<={b['clueId'] for b in refs if b['clueId']}:raise ValueError('线索编号必须有该线索的实际段落依据')
         exact=[b for b in refs if row['text']==b['text']]

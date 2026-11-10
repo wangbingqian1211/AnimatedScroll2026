@@ -3,7 +3,7 @@ import copy
 from . import workspace as ws, structured, task_runtime as tr
 
 FIELDS={
- 'intent':{'brief','theme','goal','audience','tone'},
+ 'intent':{'brief','theme','goal','audience','tone','framework','fiction','forbidden'},
  'plot':{'title','goal','body','connection'},
  'clue':{'name','summary','content'},
  'character':{'name','identity','summary','biography','relationships'},
@@ -49,8 +49,8 @@ class EntityAdapter:
         # or expand knowledge access through an ordinary prose rewrite.
         intent=p['workspace']['entities'].get('intent:main',{}).get('draft',{})
         allowed={'text','rationale'} if target.unitIds else FIELDS[self.kind]
-        return dict(target=target.model_dump(),selected=selected,allowedFields=sorted(allowed & set(target.fields) if target.fields else allowed),
-                    evidence=evidence,characterFacts=facts,historyFramework=intent.get('framework',[]),
+        return dict(operationContract=dict(op="update",section=self.kind,itemIds=list(target.itemIds),instruction="Operations must use this exact section and one of these itemIds; only allowedFields may be updated."),target=target.model_dump(),selected=selected,allowedFields=sorted(allowed & set(target.fields) if target.fields else allowed),
+                    materialContext=copy.deepcopy(value) if self.kind=='intent' else {},evidence=evidence,characterFacts=facts,historyFramework=intent.get('framework',[]),
                     forbidden=intent.get('forbidden',[]),
                     readHashes={row['id']:tr.digest(row['draft']) for row in rows})
 
@@ -77,6 +77,12 @@ class EntityAdapter:
                     if any(u.get('locked') for u in data.get('units',[])):raise ValueError('叙事情节已锁定，请先解锁')
                     replacement=ws.narrative_draft(dict(data,content=op['value']),copy.deepcopy(data))
                     row['draft']=data=replacement
+                elif self.kind=='intent' and field in ('framework','fiction','forbidden'):
+                    import json
+                    try:value=json.loads(op['value'])
+                    except (ValueError,TypeError):raise ValueError('创作方向条目必须为文字列表')
+                    if not isinstance(value,list) or any(not isinstance(v,str) for v in value):raise ValueError('创作方向条目必须为文字列表')
+                    data[field]=[v.strip() for v in value if v.strip()]
                 else:data[field]=op['value']
             if field in ('name','title','prompt') and not op['value'].strip():raise ValueError('名称或提示词不能为空')
             if self.kind=='character':self.sync_character(p,row,field)

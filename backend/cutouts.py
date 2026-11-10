@@ -75,7 +75,7 @@ def segment(image, box, prompts=None):
     """Box-prompted SAM on a padded local crop retains small painted figures."""
     global _model
     if not (MODEL / 'model.safetensors').is_file():
-        raise ValueError('本地抠图模型未准备，请运行 .venv/bin/python scripts/prepare_cutouts.py')
+        raise ValueError('人物轮廓工具尚未安装完成，请完成本地模型准备后重试')
     import torch
     from transformers import SamModel, SamProcessor
     if _model is None:

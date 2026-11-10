@@ -40,6 +40,12 @@ def node(w,key,revision=None):
     r=w['entities'].get(key)
     if not r or r.get('state')=='deleted':raise ValueError('引用对象已删除或不存在：'+key)
     if revision is None:revision=r['revision']
+    # Revision zero is an unpublished dependency placeholder, not an archived
+    # version. Bind it to the first actual publication, never the latest draft.
+    if revision==0:
+        versions=[int(v) for v in w.get('revisionArchive',{}).get(key,{}) if v.isdigit() and int(v)>0]
+        if r.get('published') is not None and r.get('revision',0)>0:versions.append(r['revision'])
+        if versions:revision=min(versions)
     if revision==r['revision'] and r.get('published') is not None:return dict(data=r['published'],refs=r.get('refs',[]),linkedRefs=r.get('linkedBasisRefs',{}),revision=revision)
     old=w.get('revisionArchive',{}).get(key,{}).get(str(revision))
     if not old:raise ValueError('无法恢复历史依据：'+key+' r'+str(revision))
@@ -154,3 +160,30 @@ def pin_citations(w,r):
 def decorate(w):
     for r in w['entities'].values():r['basisWarnings']=warnings(w,r)
     return w
+
+
+def refresh_current_dependencies(p):
+    """Publish new dependency bindings while retaining immutable old revisions."""
+    from . import workspace as ws
+    w=ws.ensure(p)
+    for kind in ('character','intent','plot','clue','knowledge','persona','storyboard'):
+        for key,r in list(w['entities'].items()):
+            if r['kind']!=kind or r['state']=='deleted':continue
+            current=ws.refs_for(w,r)
+            if r.get('published') is None:
+                r['draftRefs']=copy.deepcopy(current)
+                r['refs']=copy.deepcopy(current)
+                continue
+            if r.get('refs',[])==current:continue
+            # Validate citations against their recorded source versions before rebinding.
+            if kind=='clue':
+                probe=copy.deepcopy(r);probe['draftRefs']=copy.deepcopy(current)
+                projected=dict(w,entities=dict(w['entities']));projected['entities'][key]=probe
+                if citation_issues(projected,key,r['draft'],editing=True):continue
+            archive(w,key,r)
+            r.setdefault('history',[]).append(dict(revision=r['revision'],data=copy.deepcopy(r['published']),refs=copy.deepcopy(r.get('refs',[]))))
+            r['revision']+=1
+            r['refs']=copy.deepcopy(current)
+            if r.get('draftRefs') is not None:r['draftRefs']=copy.deepcopy(current)
+            r.pop('basisError',None)
+            archive(w,key,r)

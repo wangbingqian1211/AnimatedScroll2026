@@ -1,4 +1,9 @@
-export function personState(project:any,a:any){
+export function personState(project:any,a:any,review?:any){
+ if(review){
+  if(review.status==='human')return {key:'confirmed',label:'已确认'}
+  if(!a.characterId)return {key:'unnamed',label:'未命名'}
+  return {key:'pending',label:'待确认'}
+ }
  const c=project.characters.find((c:any)=>c.id===a.characterId)
  if(!c)return {key:'unnamed',label:'未命名'}
  if(a.identityConfirmed&&c.confirmed)return {key:'confirmed',label:'已确认'}

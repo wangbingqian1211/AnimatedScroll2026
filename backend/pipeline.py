@@ -38,6 +38,7 @@ class TaskRequest(BaseModel):
     documentId: str = ''
     trigger: str = 'user_button'
     autoEnable: bool = False
+    missingOnly: bool = False
     pages: list[int] = Field(default_factory=list, max_length=300)
     targetArtwork: str = Field(default='',max_length=160)
     documents: list[DocumentSelection] = Field(default_factory=list,max_length=20)
@@ -129,12 +130,11 @@ def install(app,get,save,db,data):
                 p['annotations'] = retained + [a for a in found if not any(vision.same_person(a,b) for b in retained)]
                 task['resultSummary']=f'检测到{len(found)}个人物候选框，请人工校准'
             elif req.kind in ('vision','vision_match'):
-                result=await vision.analyze(image_path(p),p['annotations'],lambda s:progress(task,s))
-                p['observations']=result['observations'];p['visualOverview']=result['overview']
-                for obs in result['observations']:
-                    a=next(a for a in p['annotations'] if a['id']==obs['annotationId'])
-                    if not a.get('confirmed'):a['description']=obs['description']
-                    if obs.get('faceRegion') and not a.get('faceConfirmed'):a['faceRegion']=obs['faceRegion']
+                if req.missingOnly:
+                    await vision.complete_observations(image_path(p),p,lambda s:progress(task,s))
+                else:
+                    result=await vision.analyze(image_path(p),p['annotations'],lambda s:progress(task,s))
+                    vision.apply_observations(p,result)
                 task['resultSummary']='视觉分析完成，请确认观察与推测'
                 if req.kind=='vision_match':
                     progress(task,'根据位置、服饰、动作和资料建议身份')
@@ -161,6 +161,7 @@ def install(app,get,save,db,data):
                 task['resultSummary']='OCR完成，请对照原页校对并确认' + (f'；失败页码：{page_errors}，可重试（成功页已保留）' if page_errors else '')
                 if page_errors:task['partialFailure']=True
             else:
+                await vision.complete_observations(image_path(p),p,lambda s:progress(task,s))
                 if not p['characters']:raise ValueError('请先从资料提取角色或手动添加角色')
                 p['matches']=await vision.match_people(image_path(p),p)
                 task['resultSummary']='身份候选已生成，请人工确认'
@@ -337,9 +338,15 @@ def install(app,get,save,db,data):
             return dict(project=p,documentId=doc['id'],sourceVersion=source['version'],reused=True)
         did=doc['id'] if doc else uid();name=uid()+'.txt';path=data()/name;path.write_text(payload.text,encoding='utf-8')
         row=dict(id=did,filename=name,title=title,citation=citation,format='text',inputMode='text',parseStatus='ready',parseVersion='text-input-1',pageCount=1,pages=[dict(page=1,text=payload.text)],contentHash=hashlib.sha256(payload.text.encode('utf-8')).hexdigest(),sizeBytes=len(payload.text.encode('utf-8')))
+        if doc:
+            for key in ('librarySourceId','libraryProvenance'):
+                if key in doc:row[key]=copy.deepcopy(doc[key])
         if doc:p['documents'][p['documents'].index(doc)]=row
         else:p['documents'].append(row)
         fresh=dict(id=source['id'] if source else uid(),version=source['version'] if source else 1,title=title,citation=citation,location='文本原文',text=payload.text,documentId=did,documentFilename=name,page=1,method='extracted',inputMode='text',confirmed=False)
+        if source and source.get('libraryProvenance'):
+            fresh['libraryProvenance']=copy.deepcopy(source['libraryProvenance'])
+            fresh['sourceType']=source.get('sourceType','historical_note')
         if source:p['sources'][p['sources'].index(source)]=fresh
         else:p['sources'].append(fresh)
         try:
