@@ -89,8 +89,8 @@ function qualityLabel(v:string){return ({ready:'已提取文字',review:'需核�
 
 <template>
 <article class="literature-library" data-entity-key="documents">
- <ReviewUnit v-if="!compact" unit-id="documents:main" label="确认文献资料"/><div class="rail-heading"><div><h2>文献资料</h2><p class="muted">选择已有资料、上传文件或输入文本后，点击本区的“整理资料”，生成摘要、人物候选、逐字依据及作品资料库，并按原规则启用。</p></div><GenerationButton page="library"/></div>
- <small class="materials-action-scope">整理结果也供画中姓名对应与人物档案使用；剧本、线索和分镜由各自步骤生成。上传和本地解析不调用模型，点击整理才调用 AI。</small>
+ <ReviewUnit v-if="!compact" unit-id="documents:main" label="确认文献资料"/><div class="rail-heading"><div v-if="!compact"><h2>文献资料</h2></div><GenerationButton page="library"/></div>
+ <small v-if="!compact" class="materials-action-scope">整理结果也供画中姓名对应与人物档案使用；剧本、线索和分镜由各自步骤生成。上传和本地解析不调用模型，点击整理才调用 AI。</small>
  <p v-if="error" class="banner error" role="alert">{{error}}</p><p v-if="notice" class="banner" role="status">{{notice}}</p>
  <nav class="literature-input-tabs" aria-label="文献输入模式"><button :class="{selected:inputMode==='library'}" :aria-pressed="inputMode==='library'" @click="inputMode='library'">PDF 资料</button><button :class="{selected:inputMode==='file'}" :aria-pressed="inputMode==='file'" @click="inputMode='file'">上传文献文件</button><button :class="{selected:inputMode==='text'}" :aria-pressed="inputMode==='text'" @click="inputMode='text'">输入文本</button></nav>
  <SourceLibraryPicker v-if="inputMode==='library'"/>

@@ -16,7 +16,6 @@ async function enter(p:any){await s.run(async()=>{await s.openProject(p.id);awai
 </script>
 <template>
  <section class="project-gallery" aria-label="作品与创作项目">
-  <header class="gallery-intro"><span class="gallery-eyebrow">画中有话 · 创作空间</span><h1>选择一幅画，开始你的叙事。</h1><div class="gallery-intro-bottom"><p>从画中人物出发，读懂故事，再让故事拥有自己的声音。</p><span>选画 <i>→</i> 整理与创作 <i>→</i> 入画对话</span></div></header>
   <p v-if="previewError" role="status">{{previewError}}</p>
   <div class="artwork-gallery">
    <button v-for="project in projects" :key="project.id" class="artwork-card" :disabled="s.busy.value" @click="enter(project)">
@@ -25,6 +24,6 @@ async function enter(p:any){await s.run(async()=>{await s.openProject(p.id);awai
    </button>
    <button class="new-artwork-card" :disabled="s.busy.value" @click="s.beginName('create')"><span>＋</span><h2>开启新的画中故事</h2><p>新建项目，导入你的画作与资料</p></button>
   </div>
-  <div class="gallery-footnote"><span>你的创作保存在本机，修改自动保存。</span><button v-if="s.p.value" @click="s.navigate('library')">继续当前创作 →</button></div>
+  <div class="gallery-footnote"><span>你的创作保存在本机，修改自动保存。</span></div>
  </section>
 </template>
