@@ -4,6 +4,7 @@ import {id,states} from './studioContext'
 import {restoredCreationPosition,serviceError,nextCompletionRequest,type CompletionRequest} from './experienceRuntime'
 import {clone,mergeProject,valueAt,setAt,pathLocked,localInputChanged,elapsedLabel,pollUpdate,type EditConflict} from './editRuntime'
 import {creationPages,routeNames,resolveRoute,pendingItems,runningItems,itemKey,shortReason,type CheckItem} from './navigation'
+import {outlineStep} from './outlineStep'
 import AppIcon from './AppIcon.vue'
 import CheckDrawer from './CheckDrawer.vue'
 import OverviewPage from './pages/OverviewPage.vue'
@@ -53,6 +54,13 @@ const stepIndex=computed(()=>sidebarPages.value.findIndex(item=>item.id===page.v
 function sidebarByFullIndex(after:boolean){const full=creationPages.findIndex(item=>item.id===page.value);const ordered=after?sidebarPages.value:[...sidebarPages.value].reverse();return ordered.find(item=>{const at=creationPages.findIndex(p=>p.id===item.id);return after?at>full:at<full})||null}
 const prevStep=computed(()=>stepIndex.value>0?sidebarPages.value[stepIndex.value-1]:stepIndex.value<0?sidebarByFullIndex(false):null)
 const nextStep=computed(()=>stepIndex.value>=0&&stepIndex.value<sidebarPages.value.length-1?sidebarPages.value[stepIndex.value+1]:stepIndex.value<0?sidebarByFullIndex(true):null)
+const canBack=computed(()=>page.value==='outline'&&outlineStep.value==='plot'||!!prevStep.value)
+const canForward=computed(()=>page.value==='outline'&&outlineStep.value==='direction'||!!nextStep.value)
+const backName=computed(()=>page.value==='outline'&&outlineStep.value==='plot'?'方向':prevStep.value?.short||'')
+const forwardName=computed(()=>page.value==='outline'&&outlineStep.value==='direction'?'剧情':nextStep.value?.short||'')
+const showPageGenerate=computed(()=>!!p.value&&!['overview','library','storyboards'].includes(page.value)&&!(page.value==='outline'&&outlineStep.value==='direction'))
+function stepBack(){if(page.value==='outline'&&outlineStep.value==='plot'){outlineStep.value='direction';window.scrollTo(0,0);return}if(prevStep.value)navigate(prevStep.value.id)}
+function stepForward(){if(page.value==='outline'&&outlineStep.value==='direction'){outlineStep.value='plot';window.scrollTo(0,0);return}if(nextStep.value)navigate(nextStep.value.id)}
 const pageComponents:Record<string,any>={library:LibraryPage,characters:CharactersPage,outline:OutlinePage,clues:CluesPage,storyboards:StoryboardsPage}
 const draftSavers=shallowReactive(new Map<string,{save:()=>Promise<void>,dirty:()=>boolean}>())
 function registerDraftSaver(key:string,save:()=>Promise<void>,dirty:()=>boolean){draftSavers.set(key,{save,dirty});return ()=>draftSavers.delete(key)}
@@ -192,6 +200,8 @@ async function navigate(to:string,target=''){
  // for server checks. KeepAlive retains local editor forms and selections.
   if(destination==='experience'&&p.value){returnTo.value={page:page.value==='experience'?returnTo.value.page:page.value,focus:focus.value,scrollY:window.scrollY};try{sessionStorage.setItem('animatedscroll-return:'+p.value.id,JSON.stringify(returnTo.value))}catch{};closeChecks(false)}
   page.value=destination;focus.value=target;mobileNav.value=false;writeRoute(destination)
+  if(target.startsWith('plot:'))outlineStep.value='plot'
+  else if(destination==='outline'&&previous!=='outline')outlineStep.value='direction'
   await nextTick()
   if(sequence!==navigationSequence)return
   if(target)document.querySelector<HTMLElement>(`[data-entity-key="${CSS.escape(target)}"]`)?.scrollIntoView({block:'start'})
@@ -292,14 +302,14 @@ provide('studio',{projects,beginName,experiments,openSmartEdit,runSmartAction,ca
  </header>
  <ExperimentPanel :tracker="experiments" :project-id="p?.id"/><ScreenshotFeedback :tracker="experiments" :project-id="p?.id" :page="page"/><div v-show="!experience" class="creation-space">
   <div v-if="mobileNav" class="mobile-nav-backdrop" @click="mobileNav=false"/>
-  <aside class="creation-sidebar" :class="{open:mobileNav}"><nav aria-label="制作步骤"><button v-for="(item,index) in sidebarPages" :key="item.id" :class="{active:page===item.id}" :aria-current="page===item.id?'page':undefined" :title="item.guide" :disabled="busy" @click="navigate(item.id)"><AppIcon :name="item.icon" :size="19"/><span>{{item.name}}</span><small>{{index+1}}</small></button></nav></aside>
+  <aside class="creation-sidebar" :class="{open:mobileNav}"><nav aria-label="制作步骤"><button v-for="(item,index) in sidebarPages" :key="item.id" :class="{active:page===item.id}" :aria-current="page===item.id?'page':undefined" :title="item.guide" :disabled="busy" @click="navigate(item.id)"><small>{{index+1}}</small><span>{{item.name}}</span></button></nav></aside>
   <div class="creation-main">
-   <section class="global-todo" aria-label="上一步和下一步"><button class="step-switch" :disabled="busy||!prevStep" :title="prevStep?'上一步：'+prevStep.name:undefined" @click="prevStep&&navigate(prevStep.id)"><AppIcon name="back" :size="15"/>上一步<small v-if="prevStep">{{prevStep.short}}</small></button><div class="step-status"><div v-if="activeJob" class="step-job"><span class="task-spinner"/><strong>{{activeJob.label}}</strong><span role="status">{{activeJob.progress}}<small v-if="activeJob.steps"> · {{activeJob.steps.filter((v:any)=>v.state==='completed').length}}/{{activeJob.steps.length}}</small></span><button @click="openChecks()">查看任务</button></div><span v-else-if="!p">先新建一个项目，再导入画作和资料</span></div><button class="step-switch next" :disabled="busy||!nextStep" :title="nextStep?'下一步：'+nextStep.name:undefined" @click="nextStep&&navigate(nextStep.id)">下一步<small v-if="nextStep">{{nextStep.short}}</small><AppIcon name="arrow" :size="15"/></button></section>
+   <section class="global-todo" aria-label="上一步和下一步"><button class="step-switch" :disabled="busy||!canBack" :title="backName?'上一步：'+backName:undefined" @click="stepBack"><AppIcon name="back" :size="15"/>上一步<small v-if="backName">{{backName}}</small></button><div class="step-status"><div v-if="activeJob" class="step-job"><span class="task-spinner"/><strong>{{activeJob.label}}</strong><span role="status">{{activeJob.progress}}<small v-if="activeJob.steps"> · {{activeJob.steps.filter((v:any)=>v.state==='completed').length}}/{{activeJob.steps.length}}</small></span><button @click="openChecks()">查看任务</button></div><span v-else-if="!p">先新建一个项目，再导入画作和资料</span></div><button class="step-switch next" :disabled="busy||!canForward" :title="forwardName?'下一步：'+forwardName:undefined" @click="stepForward">下一步<small v-if="forwardName">{{forwardName}}</small><AppIcon name="arrow" :size="15"/></button></section>
    <div v-if="pollWarning" class="app-message" role="status">{{pollWarning}}</div>
    <div v-if="error" class="app-message error" role="alert"><AppIcon name="alert" :size="17"/><span>{{error}}</span><button :disabled="busy||!p" @click="run(refresh)">重新加载</button><button class="icon-button" aria-label="关闭错误提示" @click="error=''"><AppIcon name="close" :size="16"/></button></div>
    <div v-if="conflicts.length" class="app-message error"><span>{{conflicts.length}} 个字段存在并行编辑冲突，当前编辑已保留。</span><button @click="showConflicts=true">查看差异</button></div><div v-if="notice" class="app-message" role="status"><span>{{notice}}</span><button class="icon-button" aria-label="关闭提示" @click="notice=''"><AppIcon name="close" :size="16"/></button></div>
    <main class="studio-shell">
-    <div class="page-heading"><div><h1>{{currentPage.name}}</h1></div><div class="project-meta" v-if="p"><GenerationButton v-if="!['overview','library','storyboards'].includes(page)" :page="page"/><small role="status">{{autoStatus}}</small></div></div>
+    <div class="page-heading"><div><h1>{{currentPage.name}}</h1></div><div class="project-meta" v-if="p"><GenerationButton v-if="showPageGenerate" :page="page"/><small role="status">{{autoStatus}}</small></div></div>
     <p v-if="p&&!['overview','library','experience'].includes(page)&&rec('material','main')?.draft.structured?.conflicts?.some((c:any)=>c.kind==='contradiction'&&c.status!=='retired'&&!['current','candidate'].includes(c.resolution))" class="material-dispute-note">资料中保留着不同说法，建议先处理相关分歧。继续创作时将保留不确定性。<button @click="navigate('library')">查看资料争议</button></p>
     <OverviewPage v-if="page==='overview'"/>
     <fieldset v-if="p" v-show="page!=='overview'" class="page-content" :disabled="busy"><KeepAlive :key="p.id" :max="5"><component v-if="pageComponents[page]" :is="pageComponents[page]" :key="page" v-on="page==='library'?{replace:legacy,running:(value:boolean)=>libraryBusy=value}:{}"/></KeepAlive></fieldset>

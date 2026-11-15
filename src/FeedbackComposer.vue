@@ -57,7 +57,7 @@ onMounted(restore);onActivated(()=>{active=true;emit('running',running.value);if
 async function sendInstruction(text:string){if(running.value)return;instruction.value=text;await send()}
 defineExpose({focus,send,sendInstruction})
 </script>
-<template><section class="feedback-composer" :class="{compact:!expanded,direct}" v-show="!direct||error||job" aria-label="智能修改" :aria-busy="running">
+<template><section class="feedback-composer" :class="{compact:!expanded,direct}" v-show="direct?(error||job):(target||error||job)" aria-label="智能修改" :aria-busy="running">
  <div v-if="!direct" class="feedback-heading"><span><AppIcon name="ai" :size="15"/>智能修改</span><small>{{target?'正在修改：'+label:'选中内容后，可用一句话说明修改方向'}}</small><button type="button" :aria-expanded="expanded" @click="expanded=!expanded">{{expanded?'收起':'展开'}}</button></div>
  <form v-show="expanded&&!direct" @submit.prevent="send()"><textarea ref="input" v-model="instruction" aria-label="自然语言修改要求" rows="2" :disabled="running" :placeholder="target?'例如：合并唐太宗与太宗，他们是同一个人；或把这段简介写得更简洁':'点击模块旁的「智能修改」，或勾选多个条目'" @keydown.ctrl.enter.prevent="send()" @keydown.meta.enter.prevent="send()"/><button class="primary" :disabled="!target||!instruction.trim()||running||s.generating.value&&!running">{{running?'处理中…':'发送修改'}}</button></form>
  <p v-if="error&&!(direct&&error.includes('超出所选内容范围'))" class="feedback-error" role="alert">{{error}}</p>
