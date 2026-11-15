@@ -11,3 +11,8 @@ body{background:var(--bg)}h1,h2,h3,h4{color:var(--text)}h1,h2,.brand{font-family
 @media(min-width:1280px){.app-frame{min-width:0}}
 
 .artwork-stage .canvas-panel{padding-bottom:0}.artwork-stage .image-editor>.image-scroll{max-height:min(65vh,700px);overflow:auto}.artwork-stage .painting-toolbar{margin:16px -20px 0}.artwork-stage .figure-strip{border-top:1px solid #e2e5d6}
+
+#app .mode-switch button { font-size: 1.125rem; font-weight: 650; }
+#app .creation-sidebar nav button { font-size: 1rem; font-weight: 550; }
+#app .extension-tabs button, #app .literature-input-tabs button { font-size: .875rem; font-weight: 500; }
+#app .extension-tabs button.selected, #app .creation-sidebar nav button.active { font-weight: 700; }
